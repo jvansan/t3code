@@ -131,6 +131,14 @@ export const LinearIcon: Icon = (props) => (
   </svg>
 );
 
+export const AsanaIcon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 100 100" fill="none">
+    <circle fill="currentColor" cx="50" cy="27" r="21" />
+    <circle fill="currentColor" cx="23" cy="69" r="21" />
+    <circle fill="currentColor" cx="77" cy="69" r="21" />
+  </svg>
+);
+
 export const CursorIcon: Icon = ({ className, ...props }) => (
   <svg
     {...props}
