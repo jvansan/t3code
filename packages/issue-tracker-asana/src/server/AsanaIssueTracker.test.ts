@@ -1,10 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as IssueTrackerHost from "@t3tools/source-control-core/server/IssueTrackerHost";
 
@@ -710,5 +712,115 @@ describe("AsanaApi", () => {
       }
       expect(fake.requests).toHaveLength(3);
     }),
+  );
+});
+
+const runs = { arbitrary: { runs: 100 } };
+
+describe("Asana API properties", () => {
+  const Status = Schema.Int.check(Schema.isBetween({ minimum: 400, maximum: 599 }));
+  const RetryAfter = Schema.Union([
+    Schema.Struct({ kind: Schema.Literal("absent") }),
+    Schema.Struct({
+      kind: Schema.Literal("seconds"),
+      seconds: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 604_800 })),
+    }),
+    Schema.Struct({
+      kind: Schema.Literal("malformed"),
+      value: Schema.Literals([
+        "",
+        "soon",
+        "1.5",
+        "-3",
+        "3 seconds",
+        "1e3",
+        "Wed, 21 Oct 2026 07:28:00 GMT",
+      ]),
+    }),
+  ]);
+  const Body = Schema.Union([
+    Schema.Struct({
+      kind: Schema.Literal("asana"),
+      message: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9 .,'-]{1,60}$/)),
+    }),
+    Schema.Struct({ kind: Schema.Literal("empty") }),
+    Schema.Struct({
+      kind: Schema.Literal("text"),
+      text: Schema.Literals(["<html>Bad gateway</html>", "not json", '{"errors":']),
+    }),
+  ]);
+
+  it.effect.prop(
+    "Feature: asana-issue-tracker, Property 11: Every Asana failure maps to one error and no retry",
+    { status: Status, retryAfter: RetryAfter, body: Body, hadOffset: Schema.Boolean },
+    ({ status, retryAfter, body, hadOffset }) =>
+      Effect.gen(function* () {
+        const headers =
+          retryAfter.kind === "absent"
+            ? {}
+            : {
+                "retry-after":
+                  retryAfter.kind === "seconds" ? String(retryAfter.seconds) : retryAfter.value,
+              };
+        const text =
+          body.kind === "asana"
+            ? JSON.stringify({ errors: [{ message: body.message, help: "" }] })
+            : body.kind === "text"
+              ? body.text
+              : "";
+        const fake = fakeAsana({ respond: () => new Response(text, { status, headers }) });
+        const now = yield* Clock.currentTimeMillis;
+        const error = yield* withApi(fake, (api) =>
+          Effect.flip(
+            api.listProjectTasks({
+              projectGid: PROJECT.gid,
+              incompleteOnly: false,
+              withFollowers: false,
+              limit: 10,
+              ...(hadOffset ? { offset: "fake-offset-10" } : {}),
+            }),
+          ),
+        );
+
+        const unreadable = `Asana returned HTTP ${status} with a body T3 Code could not read.`;
+        const expected: { reason: string; detail: string; retryAt?: number } =
+          status === 429
+            ? {
+                reason: "rate-limited",
+                detail: "Asana's rate limit was reached.",
+                ...(retryAfter.kind === "seconds"
+                  ? { retryAt: now + retryAfter.seconds * 1000 }
+                  : {}),
+              }
+            : status === 401
+              ? { reason: "unauthenticated", detail: "Asana rejected the personal access token." }
+              : status === 402
+                ? { reason: "failed", detail: "This Asana plan does not include that feature." }
+                : status === 403
+                  ? { reason: "failed", detail: "This Asana account cannot do that in Asana." }
+                  : status === 404
+                    ? {
+                        reason: "not-found",
+                        detail: "Asana has no such item, or this account cannot see it.",
+                      }
+                    : status === 400 && hadOffset
+                      ? { reason: "failed", detail: "Asana's page token expired. Reload the list." }
+                      : {
+                          reason: "failed",
+                          detail:
+                            body.kind === "asana" && body.message.trim() !== ""
+                              ? body.message.trim()
+                              : unreadable,
+                        };
+        expect(fake.requests).toHaveLength(1);
+        expect({ reason: error.reason, detail: error.detail, retryAt: error.retryAt }).toEqual({
+          retryAt: undefined,
+          ...expected,
+        });
+        expect(error.cause).toBeUndefined();
+        expect(error.tracker).toBe("asana");
+        expect(error.operation).toBe("listProjectTasks");
+      }),
+    runs,
   );
 });
