@@ -8,9 +8,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
+import type { StandaloneIssueTrackerApi } from "@t3tools/source-control-core/server/IssueTracker";
 import * as IssueTrackerHost from "@t3tools/source-control-core/server/IssueTrackerHost";
 
+import { ASANA_HOST, ASANA_WORKSPACE } from "../shared/issueUrl.ts";
 import * as AsanaApi from "./AsanaApi.ts";
+import * as AsanaIssueTracker from "./AsanaIssueTracker.ts";
 
 const BASE_URL = "https://asana.test/api/1.0";
 const STORED_TOKEN = "asana_pat_test";
@@ -861,5 +864,101 @@ describe("Asana API properties", () => {
         expect(error.detail).toContain("[redacted]");
       }),
     runs,
+  );
+});
+
+/** Runs `f` against the tracker built over the fake's `AsanaApi`. */
+const withTracker = <A, E>(
+  fake: ReturnType<typeof fakeAsana>,
+  f: (tracker: StandaloneIssueTrackerApi) => Effect.Effect<A, E>,
+) => Effect.flatMap(AsanaIssueTracker.make, f).pipe(Effect.provide(fake.layer));
+
+const SCOPE = { cwd: "/repo", host: ASANA_HOST, scope: PROJECT.gid };
+
+const unauthorized = () =>
+  Response.json({ errors: [{ message: "Not Authorized", help: "" }] }, { status: 401 });
+
+describe("AsanaIssueTracker", () => {
+  it.effect("describes Asana as a standalone tracker of projects", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana();
+      const tracker = yield* withTracker(fake, Effect.succeed);
+      expect(tracker.kind).toBe("asana");
+      expect(tracker.standalone).toEqual({
+        tracker: "asana",
+        displayName: "Asana",
+        host: ASANA_HOST,
+        scopeNoun: "project",
+        credential: {
+          label: "Personal access token",
+          helpUrl: "https://app.asana.com/0/my-apps",
+        },
+      });
+      expect(tracker.capabilities).toEqual({
+        create: true,
+        edit: true,
+        comment: true,
+        labels: true,
+        assignees: true,
+        events: true,
+        reactions: false,
+        templates: false,
+        linkedPullRequests: false,
+        search: false,
+      });
+      expect(tracker.parseIssueUrl(new URL(permalink(WORKSPACE.gid, PROJECT.gid, "7001")))).toEqual(
+        { host: ASANA_HOST, workspace: ASANA_WORKSPACE, scope: PROJECT.gid, key: "7001" },
+      );
+      expect(fake.requests).toEqual([]);
+    }),
+  );
+
+  it.effect("probes a submitted token and names every project as a scope", () =>
+    Effect.gen(function* () {
+      const other: FakeProject = { ...PROJECT, gid: "5002", name: "Mobile" };
+      const archived: FakeProject = { ...PROJECT, gid: "5003", name: "Old", archived: true };
+      const fake = fakeAsana({ model: { projects: [PROJECT, other, archived] } });
+      const probed = yield* withTracker(fake, (tracker) =>
+        tracker.probeCredential("submitted_pat_test"),
+      );
+      expect(probed).toEqual({
+        account: "Julius",
+        workspace: ASANA_WORKSPACE,
+        scopes: [
+          { key: PROJECT.gid, name: "Platform" },
+          { key: other.gid, name: "Mobile" },
+        ],
+      });
+      expect(fake.requests.map((request) => request.authorization)).toEqual([
+        "Bearer submitted_pat_test",
+        "Bearer submitted_pat_test",
+      ]);
+      expect(new URL(fake.requests[1]?.url ?? "").searchParams.get("archived")).toBe("false");
+    }),
+  );
+
+  it.effect("a probe Asana answers 401 to fails unauthenticated", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana({ respond: unauthorized });
+      const error = yield* withTracker(fake, (tracker) =>
+        Effect.flip(tracker.probeCredential("submitted_pat_test")),
+      );
+      expect(error.reason).toBe("unauthenticated");
+      expect(error.tracker).toBe("asana");
+      expect(fake.requests).toHaveLength(1);
+    }),
+  );
+
+  it.effect("the viewer is the stored token's user, by email", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana();
+      const viewer = yield* withTracker(fake, (tracker) =>
+        tracker.getViewer({ cwd: SCOPE.cwd, host: SCOPE.host }),
+      );
+      expect(viewer).toBe(JULIUS.email);
+      expect(fake.requests.map((request) => request.authorization)).toEqual([
+        `Bearer ${STORED_TOKEN}`,
+      ]);
+    }),
   );
 });
