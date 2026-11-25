@@ -880,6 +880,9 @@ importers:
       '@napi-rs/keyring':
         specifier: ^1.3.0
         version: 1.3.0
+      '@t3tools/issue-tracker-asana':
+        specifier: workspace:*
+        version: link:../../packages/issue-tracker-asana
       '@t3tools/issue-tracker-linear':
         specifier: workspace:*
         version: link:../../packages/issue-tracker-linear
