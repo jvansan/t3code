@@ -2424,6 +2424,75 @@ describe("Asana tracker properties", () => {
   );
 
   it.effect.prop(
+    "Feature: asana-issue-tracker, Property 10: One user has one login everywhere",
+    { person: SomeUser, other: SomeUser },
+    ({ person, other }) =>
+      Effect.gen(function* () {
+        const decoy: FakeUser = {
+          ...other,
+          gid: other.gid === person.gid ? `${person.gid}0` : other.gid,
+          email: other.email === person.email ? null : other.email,
+        };
+        const expected = person.email?.trim() || person.gid;
+        const fake = fakeAsana({
+          model: {
+            me: { ...person, workspaces: [WORKSPACE] },
+            projects: [{ ...PROJECT, members: [decoy, person] }],
+            tasks: [
+              task("7001", { assignee: person, created_by: person }),
+              task("7002", { assignee: decoy, created_by: decoy }),
+              task("7003", { assignee: null, created_by: null }),
+            ],
+            stories: [
+              comment("8101", "7001", "Hi", at(0), person),
+              {
+                gid: "8102",
+                task: "7001",
+                type: "system",
+                resource_subtype: "assigned",
+                text: "assigned",
+                created_at: at(60),
+                created_by: person,
+                assignee: decoy,
+              },
+            ],
+          },
+        });
+        const listing = {
+          ...SCOPE,
+          state: "all",
+          involvement: "all",
+          sort: "updated",
+          limit: 10,
+        } as const;
+        const [page, detail, candidates, filtered, viewer] = yield* withTracker(fake, (tracker) =>
+          Effect.all([
+            tracker.listIssues(listing),
+            tracker.getIssue({ ...SCOPE, key: "7001" }),
+            tracker.listCandidates?.(SCOPE) ?? Effect.die("none"),
+            tracker.listIssues({ ...listing, assignee: expected }),
+            tracker.getViewer({ cwd: SCOPE.cwd, host: SCOPE.host }),
+          ]),
+        );
+        const summary = page.items.find((item) => item.key === "7001");
+        expect(summary?.author?.login).toBe(expected);
+        expect(summary?.assignees.map((actor) => actor.login)).toEqual([expected]);
+        expect(detail.author?.login).toBe(expected);
+        expect(detail.comments.map((entry) => entry.author?.login)).toEqual([expected]);
+        expect(detail.events.map((event) => event.actor?.login)).toEqual([expected]);
+        expect(detail.viewer).toBe(expected);
+        expect(viewer).toBe(expected);
+        expect(
+          candidates.assignees
+            .filter((candidate) => candidate.id === person.gid)
+            .map((c) => c.login),
+        ).toEqual([expected]);
+        expect(filtered.items.map((item) => item.key)).toEqual(["7001"]);
+      }),
+    runs,
+  );
+
+  it.effect.prop(
     "Feature: asana-issue-tracker, Property 8: A task maps to a summary field for field",
     { tasks: Schema.Array(SomeTask).check(Schema.isBetweenLength(1, 8)) },
     ({ tasks }) =>
