@@ -426,9 +426,9 @@ each can be loaded further on its own. Agents file new issues in the first team 
 connect another Linear workspace or user, add another account in the same place; each project
 reads its teams through the account you picked them under.
 
-To list Asana tasks beside a project's, connect Asana with a personal access token from Asana's
-developer console under Settings → Source control & issues, then pick one or more Asana projects
-for that project there. To connect another Asana user, add another account in the same place.
+To list Asana tasks beside a project's, create a personal access token in Asana's developer
+console, connect Asana with it under Settings → Source control & issues, then pick one or more
+Asana projects for that project there. To connect another Asana user, add another account in the same place.
 Asana tasks move between Incomplete and Completed, show no reactions, templates, linked pull
 requests, or tracker-side search, and each **Load more** page of an Asana project follows the
 project's own order. A task shows its Eng. ID when the project has that field.
