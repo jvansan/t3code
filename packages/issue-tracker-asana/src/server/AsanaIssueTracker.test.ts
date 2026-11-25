@@ -1607,6 +1607,97 @@ describe("AsanaIssueTracker", () => {
     }),
   );
 
+  it.effect(
+    "offers the workspace's tags with colours and the project's members as candidates",
+    () =>
+      Effect.gen(function* () {
+        const ada: FakeUser = { gid: "2003", name: " Ada ", email: null, photo: null };
+        const fake = fakeAsana({
+          model: {
+            projects: [{ ...PROJECT, members: [JULIUS, THEO, ada] }],
+            tags: [
+              BUG_TAG,
+              { ...BUG_TAG, gid: "6002", name: " Feature ", color: null },
+              { ...BUG_TAG, gid: "6003", name: "Odd", color: "neon" },
+              { ...BUG_TAG, gid: "6004", name: "  ", color: "light-blue" },
+              { ...BUG_TAG, gid: "6005", name: "Elsewhere", workspace: { gid: "1001" } },
+            ],
+          },
+        });
+        const candidates = yield* withTracker(
+          fake,
+          (tracker) => tracker.listCandidates?.(SCOPE) ?? Effect.die("no listCandidates"),
+        );
+        expect(candidates).toEqual({
+          labels: [
+            { name: "Bug", color: "#c43c39", description: null },
+            { name: "Feature", color: null, description: null },
+            { name: "Odd", color: null, description: null },
+            { name: "6004", color: "#a7c6f5", description: null },
+          ],
+          assignees: [
+            { ...actorOf(JULIUS), id: JULIUS.gid },
+            { ...actorOf(THEO), id: THEO.gid },
+            { login: ada.gid, name: "Ada", avatarUrl: null, id: ada.gid },
+          ],
+          truncated: false,
+        });
+        const reads = fake.requests.map((request) => {
+          const url = new URL(request.url);
+          return [url.pathname, url.searchParams.get("workspace"), optFieldsOf(request)];
+        });
+        expect(reads).toEqual([
+          [`/api/1.0/projects/${PROJECT.gid}`, null, `name,workspace,${USER("members")}`],
+          ["/api/1.0/tags", WORKSPACE.gid, "name,color"],
+        ]);
+      }),
+  );
+
+  it.effect("candidates are truncated past five tag pages", () =>
+    Effect.gen(function* () {
+      const tags = Array.from({ length: 501 }, (_, index) => ({
+        ...BUG_TAG,
+        gid: String(6000 + index),
+        name: `Tag ${index}`,
+      }));
+      const fake = fakeAsana({ model: { tags } });
+      const [full, cut] = yield* withTracker(fake, (tracker) =>
+        Effect.all([
+          tracker.listCandidates?.(SCOPE) ?? Effect.die("no listCandidates"),
+          Effect.gen(function* () {
+            fake.model.tags.pop();
+            return yield* tracker.listCandidates?.(SCOPE) ?? Effect.die("no listCandidates");
+          }),
+        ]),
+      );
+      expect(full.truncated).toBe(true);
+      expect(full.labels).toHaveLength(500);
+      expect(cut.truncated).toBe(false);
+      expect(cut.labels).toHaveLength(500);
+      const tagPages = fake.requests.filter((request) => request.url.includes("/tags?"));
+      expect(tagPages).toHaveLength(10);
+    }),
+  );
+
+  it.effect(
+    "candidates for a non-gid scope fail before any request, a missing project not-found",
+    () =>
+      Effect.gen(function* () {
+        const fake = fakeAsana();
+        const named = yield* withTracker(fake, (tracker) =>
+          Effect.flip(tracker.listCandidates?.({ ...SCOPE, scope: "ENG" }) ?? Effect.die("none")),
+        );
+        expect(named.reason).toBe("failed");
+        expect(named.detail).toBe("Asana projects are named by gid.");
+        expect(fake.requests).toEqual([]);
+        const missing = yield* withTracker(fake, (tracker) =>
+          Effect.flip(tracker.listCandidates?.({ ...SCOPE, scope: "5999" }) ?? Effect.die("none")),
+        );
+        expect(missing.reason).toBe("not-found");
+        expect(fake.requests).toHaveLength(1);
+      }),
+  );
+
   it.effect("an unknown label names the tag cap when the tag read was cut short", () =>
     Effect.gen(function* () {
       const tags = Array.from({ length: 501 }, (_, index) => ({
