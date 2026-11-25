@@ -17,6 +17,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
+import { sourceControlClients } from "./sourceControlClients.ts";
+
 export interface WorkflowQuestionChoice {
   readonly value: string;
   /** What picking it does. */
@@ -921,7 +923,11 @@ export function workflowReferenceLabel(reference: WorkflowRunReference): string 
   const pullRequest = workflowReferencePullRequest(reference);
   if (pullRequest !== null) return `#${pullRequest.number}`;
   const issue = workflowReferenceIssue(reference);
-  if (issue !== null) return /^\d+$/.test(issue.key) ? `#${issue.key}` : issue.key;
+  if (issue !== null) {
+    return sourceControlClients.find(issue.tracker) !== undefined && /^\d+$/.test(issue.key)
+      ? `#${issue.key}`
+      : issue.key;
+  }
   return reference.title === "" ? reference.kind : reference.title;
 }
 

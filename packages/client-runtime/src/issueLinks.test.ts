@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveIssueLinkTarget } from "./issueLinks.ts";
+import { mayContainStandaloneIssueLink, resolveIssueLinkTarget } from "./issueLinks.ts";
 
 const project = (id: string, repository: string, origin?: string) =>
   ({
@@ -158,6 +158,62 @@ describe("resolveIssueLinkTarget", () => {
       both("https://linear.app/othercorp/issue/WEB-17"),
       both("https://linear.app/acme/issue/WEB-17"),
     ]).toEqual(["p2", "p1"]);
+  });
+
+  it("reads an Asana link through the project bound to its Asana project, else any bound to Asana", () => {
+    const trackers = {
+      trackers: [
+        {
+          tracker: IssueTrackerKind.make("asana"),
+          displayName: "Asana",
+          host: "app.asana.com",
+          scopeNoun: "project",
+          credential: { label: "Personal access token", helpUrl: null },
+          connected: true,
+          account: "julius",
+          detail: null,
+          workspace: "app.asana.com",
+          scopes: [],
+        },
+      ],
+      bindings: {
+        [ProjectId.make("p1")]: {
+          tracker: IssueTrackerKind.make("asana"),
+          scope: "1201000000000001",
+        },
+        [ProjectId.make("p2")]: { tracker: IssueTrackerKind.make("linear"), scope: "WEB" },
+      },
+    };
+    const resolve = (url: string) => resolveIssueLinkTarget({ url, projects, trackers })?.ref;
+    const bound = {
+      projectId: "p1",
+      tracker: "asana",
+      host: "app.asana.com",
+      scope: "1201000000000001",
+      key: "1203456789012345",
+    };
+    expect(resolve("https://app.asana.com/0/1201000000000001/1203456789012345/f")).toEqual(bound);
+    expect(
+      resolve(
+        "https://app.asana.com/1/1100000000000000/project/1201000000000001/task/1203456789012345",
+      ),
+    ).toEqual(bound);
+    // A project no T3 Code project is bound to, and a link naming no project, read through a lender.
+    expect(resolve("https://app.asana.com/0/1201000000000002/1203456789012346")).toMatchObject({
+      projectId: "p1",
+      scope: "1201000000000002",
+      key: "1203456789012346",
+    });
+    expect(resolve("https://app.asana.com/1/1100000000000000/task/1203456789012347")).toMatchObject(
+      { projectId: "p1", scope: "0", key: "1203456789012347" },
+    );
+    expect(resolve("https://app.asana.com.evil.example/0/1201000000000001/1203456789012345")).toBe(
+      undefined,
+    );
+    expect(mayContainStandaloneIssueLink("see https://app.asana.com/0/1/2")).toBe(true);
+    expect(mayContainStandaloneIssueLink("see https://app.asana.com.evil.example/0/1/2")).toBe(
+      false,
+    );
   });
 
   it.each([

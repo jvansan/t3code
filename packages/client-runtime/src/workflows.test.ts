@@ -657,10 +657,10 @@ describe("workflow references", () => {
     origin: "step",
     ...fields,
   });
-  const issue = (key: string) =>
+  const issue = (key: string, tracker = "github") =>
     reference({
       key,
-      address: { projectId: "p1", tracker: "github", scope: "me/app", key },
+      address: { projectId: "p1", tracker, scope: "me/app", key },
       steps: ["triage"],
     });
   const pullRequest = reference({
@@ -673,8 +673,10 @@ describe("workflow references", () => {
 
   it("names each by what its kind calls it, and a kind it does not know by its title", () => {
     expect(
-      [issue("412"), issue("ENG-12"), pullRequest, machine].map(workflowReferenceLabel),
-    ).toEqual(["#412", "ENG-12", "#418", "box-1"]);
+      [issue("412"), issue("ENG-12"), issue("1203456789012345", "asana"), pullRequest, machine].map(
+        workflowReferenceLabel,
+      ),
+    ).toEqual(["#412", "ENG-12", "1203456789012345", "#418", "box-1"]);
     expect(workflowReferenceLabel(reference({ kind: "machine" }))).toBe("machine");
   });
 
