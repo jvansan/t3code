@@ -1064,6 +1064,217 @@ describe("AsanaIssueTracker", () => {
     }),
   );
 
+  const STORY_FIELDS = `type,resource_subtype,text,created_at,${USER("created_by")},${USER("assignee")},tag.name,new_name`;
+  const system = (
+    gid: string,
+    resource_subtype: string,
+    created_at: string,
+    extra: Partial<FakeStory> = {},
+  ): FakeStory => ({
+    gid,
+    task: "7001",
+    type: "system",
+    resource_subtype,
+    text: resource_subtype.replaceAll("_", " "),
+    created_at,
+    created_by: THEO,
+    ...extra,
+  });
+
+  it.effect("reads a task with its newest comments and the events T3 Code has words for", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana({
+        model: {
+          tasks: [
+            task("7001", {
+              notes: "Body text",
+              custom_fields: [{ gid: "8001", name: "Eng. ID", display_value: "ENG-120" }],
+            }),
+          ],
+          stories: [
+            comment("8101", "7001", "First", "2026-07-03T00:00:00.000Z"),
+            comment("8102", "7001", "Second", "2026-07-04T00:00:00.000Z", THEO),
+            system("8103", "marked_complete", "2026-07-03T12:00:00.000Z", { created_by: JULIUS }),
+            system("8104", "added_to_tag", "2026-07-05T00:00:00.000Z", { tag: tagRef(BUG_TAG) }),
+            system("8105", "liked", "2026-07-06T00:00:00.000Z"),
+          ],
+        },
+      });
+      const detail = yield* withTracker(fake, (tracker) =>
+        tracker.getIssue({ ...SCOPE, key: "7001" }),
+      );
+      expect(detail.key).toBe("7001");
+      expect(detail.displayKey).toBe("ENG-120");
+      expect(detail.body).toBe("Body text");
+      expect(detail.viewer).toBe(JULIUS.email);
+      expect(detail.viewerPermissions).toEqual({
+        setState: true,
+        comment: true,
+        edit: true,
+        labels: true,
+        assignees: true,
+      });
+      expect(detail.states).toEqual([
+        { category: "open", name: "Incomplete" },
+        { category: "closed", name: "Completed", closeReason: "completed" },
+      ]);
+      expect(detail.linkedPullRequests).toEqual([]);
+      expect("reactions" in detail).toBe(false);
+      expect(detail.comments).toEqual([
+        {
+          id: "8101",
+          author: actorOf(JULIUS),
+          body: "First",
+          createdAt: "2026-07-03T00:00:00.000Z",
+          url: null,
+        },
+        {
+          id: "8102",
+          author: actorOf(THEO),
+          body: "Second",
+          createdAt: "2026-07-04T00:00:00.000Z",
+          url: null,
+        },
+      ]);
+      expect(detail.comments.every((entry) => !("reactions" in entry))).toBe(true);
+      expect(detail.commentsCursor).toBeNull();
+      expect(detail.events).toEqual([
+        {
+          id: "8103",
+          kind: "closed",
+          actor: actorOf(JULIUS),
+          createdAt: "2026-07-03T12:00:00.000Z",
+          detail: null,
+        },
+        {
+          id: "8104",
+          kind: "labeled",
+          actor: actorOf(THEO),
+          createdAt: "2026-07-05T00:00:00.000Z",
+          detail: "Bug",
+        },
+      ]);
+      const reads = fake.requests.map((request) => {
+        const url = new URL(request.url);
+        url.searchParams.delete("opt_fields");
+        return [`${url.pathname}?${url.searchParams.toString()}`, optFieldsOf(request)];
+      });
+      expect(reads).toHaveLength(4);
+      expect(reads).toEqual(
+        expect.arrayContaining([
+          ["/api/1.0/tasks/7001?", `${TASK_SUMMARY},notes,memberships.project.name`],
+          [
+            "/api/1.0/tasks/7001/stories?limit=50&sort_ascending=false&resource_subtype=comment_added",
+            STORY_FIELDS,
+          ],
+          ["/api/1.0/tasks/7001/stories?limit=100&sort_ascending=false", STORY_FIELDS],
+          ["/api/1.0/users/me?", "name,email,workspaces.name"],
+        ]),
+      );
+    }),
+  );
+
+  it.effect("hands older comments over fifty at a time, each page oldest first", () =>
+    Effect.gen(function* () {
+      const stories = Array.from({ length: 60 }, (_, index) =>
+        comment(String(8200 + index), "7001", `Comment ${index}`, at(index * 60)),
+      );
+      const fake = fakeAsana({ model: { stories } });
+      const detail = yield* withTracker(fake, (tracker) =>
+        tracker.getIssue({ ...SCOPE, key: "7001" }),
+      );
+      expect(detail.comments.map((entry) => entry.body)).toEqual(
+        stories.slice(10).map((story) => story.text),
+      );
+      expect(detail.commentsCursor).toBe("a1.fake-offset-50");
+      const older = yield* withTracker(fake, (tracker) =>
+        tracker.getComments({ ...SCOPE, key: "7001", cursor: detail.commentsCursor ?? "" }),
+      );
+      expect(older.comments.map((entry) => entry.body)).toEqual(
+        stories.slice(0, 10).map((story) => story.text),
+      );
+      expect(older.nextCursor).toBeNull();
+      const url = new URL(fake.requests.at(-1)?.url ?? "");
+      url.searchParams.delete("opt_fields");
+      expect(`${url.pathname}?${url.searchParams.toString()}`).toBe(
+        "/api/1.0/tasks/7001/stories?limit=50&sort_ascending=false&resource_subtype=comment_added&offset=fake-offset-50",
+      );
+    }),
+  );
+
+  it.effect("names a task for a thread link with one read", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana();
+      const link = yield* withTracker(
+        fake,
+        (tracker) =>
+          tracker.getIssueLink?.({ ...SCOPE, key: "7002" }) ?? Effect.die("no getIssueLink"),
+      );
+      expect(link).toEqual({
+        title: "Task 7002",
+        url: permalink(WORKSPACE.gid, PROJECT.gid, "7002"),
+        displayKey: "7002",
+      });
+      expect(fake.requests.map(optFieldsOf)).toEqual([`name,permalink_url,${CUSTOM_FIELDS}`]);
+    }),
+  );
+
+  it.effect("a read of a missing task fails not-found", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana();
+      const [detail, link, comments] = yield* withTracker(fake, (tracker) =>
+        Effect.all([
+          Effect.flip(tracker.getIssue({ ...SCOPE, key: "7999" })),
+          Effect.flip(tracker.getIssueLink?.({ ...SCOPE, key: "7999" }) ?? Effect.die("none")),
+          Effect.flip(tracker.getComments({ ...SCOPE, key: "7999", cursor: "a1.fake-offset-0" })),
+        ]),
+      );
+      expect([detail.reason, link.reason, comments.reason]).toEqual([
+        "not-found",
+        "not-found",
+        "not-found",
+      ]);
+      expect(fake.requests.length).toBeGreaterThan(0);
+    }),
+  );
+
+  it.effect("a key that is not a gid fails not-found before any request", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana();
+      const [detail, link, comments] = yield* withTracker(fake, (tracker) =>
+        Effect.all([
+          Effect.flip(tracker.getIssue({ ...SCOPE, key: "ENG-120" })),
+          Effect.flip(tracker.getIssueLink?.({ ...SCOPE, key: "ENG-120" }) ?? Effect.die("none")),
+          Effect.flip(
+            tracker.getComments({ ...SCOPE, key: "ENG-120", cursor: "a1.fake-offset-0" }),
+          ),
+        ]),
+      );
+      expect([detail.reason, link.reason, comments.reason]).toEqual([
+        "not-found",
+        "not-found",
+        "not-found",
+      ]);
+      expect(fake.requests).toEqual([]);
+    }),
+  );
+
+  it.effect("a failing viewer read leaves the detail without a viewer", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana({
+        respond: (_, url) =>
+          url.pathname.endsWith("/users/me")
+            ? Response.json({ errors: [{ message: "Server Error", help: "" }] }, { status: 500 })
+            : undefined,
+      });
+      const detail = yield* withTracker(fake, (tracker) =>
+        tracker.getIssue({ ...SCOPE, key: "7001" }),
+      );
+      expect(detail.viewer).toBeNull();
+      expect(detail.key).toBe("7001");
+    }),
+  );
+
   it.effect("the viewer is the stored token's user, by email", () =>
     Effect.gen(function* () {
       const fake = fakeAsana();
