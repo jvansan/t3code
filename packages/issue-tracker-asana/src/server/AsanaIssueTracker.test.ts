@@ -2094,6 +2094,114 @@ describe("Asana tracker properties", () => {
     runs,
   );
 
+  const PROJECTS: ReadonlyArray<FakeProject> = [PROJECT, "5002", "5003", "5004"].map((entry) =>
+    typeof entry === "string" ? { ...PROJECT, gid: entry, name: `Project ${entry}` } : entry,
+  );
+  const ProjectIndex = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 }));
+  const Write = Schema.Literals(["comment", "update", "setState"]);
+  const Refusal = Schema.Literals([
+    "scope outside memberships",
+    "non-gid key",
+    "unknown state",
+    "two assignees",
+    "assignee by name",
+    "unmatched label",
+  ]);
+  const isWrite = (request: RecordedRequest) =>
+    request.method === "POST" || request.method === "PUT";
+
+  it.effect.prop(
+    "Feature: asana-issue-tracker, Property 14: A refused write sends no write",
+    {
+      memberships: Schema.Array(ProjectIndex).check(Schema.isBetweenLength(0, 4)),
+      scope: ProjectIndex,
+      write: Write,
+      refusal: Refusal,
+    },
+    ({ memberships, scope, write, refusal }) =>
+      Effect.gen(function* () {
+        const member = unique(memberships).flatMap((index) => PROJECTS[index] ?? []);
+        const fake = fakeAsana({
+          model: {
+            projects: [...PROJECTS],
+            tasks: [
+              task("7001", {
+                memberships: member.map((project) => ({
+                  project: { gid: project.gid, name: project.name },
+                })),
+              }),
+              task("7002"),
+            ],
+          },
+        });
+        const target = { ...SCOPE, scope: PROJECTS[scope]?.gid ?? "", key: "7001" };
+        const attempt = (
+          tracker: StandaloneIssueTrackerApi,
+          input: typeof target,
+          kind: typeof Write.Type,
+        ) => {
+          switch (kind) {
+            case "comment":
+              return tracker.comment?.({ ...input, body: "Hi" }) ?? Effect.die("no comment");
+            case "update":
+              return tracker.update?.({ ...input, title: "Renamed" }) ?? Effect.die("no update");
+            case "setState":
+              return (
+                tracker.setState?.({ ...input, state: "Completed" }) ?? Effect.die("no setState")
+              );
+          }
+        };
+
+        const inScope = member.some((project) => project.gid === target.scope);
+        const exit = yield* withTracker(fake, (tracker) =>
+          Effect.exit(attempt(tracker, target, write)),
+        );
+        expect(Exit.isSuccess(exit)).toBe(inScope);
+        expect(fake.requests.filter(isWrite)).toHaveLength(inScope ? 1 : 0);
+        if (Exit.isFailure(exit)) {
+          const error = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect(error.value.reason).toBe("failed");
+            expect(error.value.detail).toBe(`Asana task 7001 is not in project ${target.scope}.`);
+          }
+        }
+
+        const before = fake.requests.length;
+        const scoped = { ...SCOPE, key: "7002" };
+        const refused = yield* withTracker(fake, (tracker) => {
+          switch (refusal) {
+            case "scope outside memberships":
+              return Effect.flip(attempt(tracker, { ...scoped, scope: "5999" }, write));
+            case "non-gid key":
+              return Effect.flip(attempt(tracker, { ...scoped, key: "ENG-7001" }, write));
+            case "unknown state":
+              return Effect.flip(
+                tracker.setState?.({ ...scoped, state: "Done" }) ?? Effect.die("no setState"),
+              );
+            case "two assignees":
+              return Effect.flip(
+                tracker.update?.({ ...scoped, assignees: [THEO.gid, JULIUS.gid] }) ??
+                  Effect.die("no update"),
+              );
+            case "assignee by name":
+              return Effect.flip(
+                tracker.update?.({ ...scoped, assignees: ["theo"] }) ?? Effect.die("no update"),
+              );
+            case "unmatched label":
+              return Effect.flip(
+                tracker.update?.({ ...scoped, labels: ["Bug", "Urgent"] }) ??
+                  Effect.die("no update"),
+              );
+          }
+        });
+        expect(["failed", "not-found"]).toContain(refused.reason);
+        expect(refused.reason).toBe(refusal === "non-gid key" ? "not-found" : "failed");
+        expect(fake.requests.slice(before).filter(isWrite)).toEqual([]);
+      }),
+    runs,
+  );
+
   it.effect.prop(
     "Feature: asana-issue-tracker, Property 8: A task maps to a summary field for field",
     { tasks: Schema.Array(SomeTask).check(Schema.isBetweenLength(1, 8)) },
