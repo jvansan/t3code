@@ -6,6 +6,10 @@
     "./shared/issueUrl": {
       "types": "./src/shared/issueUrl.ts",
       "import": "./src/shared/issueUrl.ts"
+    },
+    "./server/driver": {
+      "types": "./src/server/driver.ts",
+      "import": "./src/server/driver.ts"
     }
   },
   "scripts": {
@@ -14,6 +18,7 @@
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/source-control-core": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
