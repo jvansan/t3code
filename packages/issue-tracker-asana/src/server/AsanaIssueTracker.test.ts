@@ -1257,6 +1257,155 @@ describe("Asana tracker properties", () => {
     runs,
   );
 
+  const ADA: FakeUser = { gid: "2003", name: "Ada", email: null, photo: null };
+  const PEOPLE = [JULIUS, THEO, ADA] as const;
+  const FEATURE_TAG: FakeTag = { ...BUG_TAG, gid: "6002", name: "Feature", color: null };
+  const INFO_TAG: FakeTag = { ...BUG_TAG, gid: "6003", name: "  Needs info ", color: "neon" };
+  const LABELS = [BUG_TAG, FEATURE_TAG, INFO_TAG] as const;
+  const Person = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: PEOPLE.length - 1 }));
+  const Label = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: LABELS.length - 1 }));
+  const Tick = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 50 }));
+  const ListedTask = Schema.Struct({
+    completed: Schema.Boolean,
+    hasParent: Schema.Boolean,
+    assignee: Schema.NullOr(Person),
+    createdBy: Schema.NullOr(Person),
+    followers: Schema.Array(Person).check(Schema.isBetweenLength(0, 3)),
+    tags: Schema.Array(Label).check(Schema.isBetweenLength(0, 3)),
+    createdAt: Tick,
+    modifiedAt: Tick,
+  });
+  const Listing = Schema.Struct({
+    state: Schema.Literals(["all", "open", "closed"]),
+    involvement: Schema.Literals(["all", "assigned", "authored", "mentioned"]),
+    assignee: Schema.NullOr(
+      Schema.Struct({ person: Person, by: Schema.Literals(["login", "gid"]) }),
+    ),
+    labels: Schema.Array(
+      Schema.Struct({ label: Label, casing: Schema.Literals(["as-is", "upper", "lower"]) }),
+    ).check(Schema.isBetweenLength(0, 3)),
+    sort: Schema.Literals(["updated", "created"]),
+    limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 })),
+  });
+  const loginOf = (person: FakeUser) => person.email ?? person.gid;
+  const unique = <A>(items: ReadonlyArray<A>) => [...new Set(items)];
+
+  it.effect.prop(
+    "Feature: asana-issue-tracker, Property 5: Listing pages concatenate to exactly the filtered task set",
+    {
+      tasks: Schema.Array(ListedTask).check(Schema.isBetweenLength(0, 30)),
+      me: Person,
+      pageSize: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+      listing: Listing,
+    },
+    ({ tasks, me, pageSize, listing }) =>
+      Effect.gen(function* () {
+        const viewer = PEOPLE[me] ?? JULIUS;
+        const fakeTasks = tasks.map((source, index) =>
+          task(String(7200 + index), {
+            completed: source.completed,
+            completed_at: source.completed ? FAKE_NOW : null,
+            parent: source.hasParent ? { gid: "7000" } : null,
+            assignee: source.assignee === null ? null : (PEOPLE[source.assignee] ?? null),
+            created_by: source.createdBy === null ? null : (PEOPLE[source.createdBy] ?? null),
+            followers: unique(source.followers).flatMap((index) => PEOPLE[index] ?? []),
+            tags: unique(source.tags).flatMap((index) => {
+              const tag = LABELS[index];
+              return tag === undefined ? [] : [tagRef(tag)];
+            }),
+            created_at: at(source.createdAt),
+            modified_at: at(source.modifiedAt),
+          }),
+        );
+        const fake = fakeAsana({
+          model: {
+            me: { ...viewer, workspaces: [WORKSPACE] },
+            tasks: fakeTasks,
+            tags: [...LABELS],
+            pageSize,
+          },
+        });
+        const assigneeFilter =
+          listing.assignee === null
+            ? undefined
+            : listing.assignee.by === "gid"
+              ? (PEOPLE[listing.assignee.person] ?? JULIUS).gid
+              : loginOf(PEOPLE[listing.assignee.person] ?? JULIUS);
+        const labels = listing.labels.map(({ label, casing }) => {
+          const name = LABELS[label]?.name ?? "";
+          return casing === "upper"
+            ? name.toUpperCase()
+            : casing === "lower"
+              ? name.toLowerCase()
+              : name;
+        });
+        const input = {
+          ...SCOPE,
+          state: listing.state,
+          sort: listing.sort,
+          limit: listing.limit,
+          assignee: assigneeFilter,
+          labels,
+          ...(listing.involvement === "all"
+            ? { involvement: "all" as const }
+            : { involvement: listing.involvement, viewer: loginOf(viewer) }),
+        };
+
+        const isViewer = (user: FakeUser | null) => user !== null && user.gid === viewer.gid;
+        const expected = fakeTasks.filter((candidate) => {
+          if (candidate.parent !== null) return false;
+          if (listing.state === "open" && candidate.completed) return false;
+          if (listing.state === "closed" && !candidate.completed) return false;
+          if (listing.involvement === "assigned" && !isViewer(candidate.assignee)) return false;
+          if (listing.involvement === "authored" && !isViewer(candidate.created_by)) return false;
+          if (listing.involvement === "mentioned" && !candidate.followers.some(isViewer)) {
+            return false;
+          }
+          if (
+            assigneeFilter !== undefined &&
+            !(
+              candidate.assignee !== null &&
+              (loginOf(candidate.assignee) === assigneeFilter ||
+                candidate.assignee.gid === assigneeFilter)
+            )
+          ) {
+            return false;
+          }
+          const names = candidate.tags.map((tag) => tag.name.trim().toLowerCase());
+          return labels.every((label) => names.includes(label.trim().toLowerCase()));
+        });
+
+        const seen: Array<string> = [];
+        let cursor: string | undefined;
+        let previousOffset: string | null = null;
+        for (let round = 0; round < 200; round += 1) {
+          const before = fake.requests.length;
+          const page = yield* withTracker(fake, (tracker) =>
+            tracker.listIssues({ ...input, cursor }),
+          );
+          const reads = fake.requests
+            .slice(before)
+            .filter((request) => new URL(request.url).pathname.endsWith("/tasks"));
+          expect(reads).toHaveLength(1);
+          const params = new URL(reads[0]?.url ?? "").searchParams;
+          expect(params.get("limit")).toBe(String(Math.min(listing.limit, 100)));
+          expect(params.get("completed_since")).toBe(listing.state === "open" ? "now" : null);
+          expect(params.get("offset")).toBe(previousOffset);
+
+          const dates = page.items.map((item) =>
+            Date.parse(listing.sort === "created" ? item.createdAt : item.updatedAt),
+          );
+          expect(dates).toEqual([...dates].sort((left, right) => right - left));
+          seen.push(...page.items.map((item) => item.key));
+          if (page.nextCursor === null) break;
+          previousOffset = AsanaApi.decodeCursor(page.nextCursor);
+          cursor = page.nextCursor;
+        }
+        expect([...seen].sort()).toEqual(expected.map((candidate) => candidate.gid).sort());
+      }),
+    runs,
+  );
+
   it.effect.prop(
     "Feature: asana-issue-tracker, Property 8: A task maps to a summary field for field",
     { tasks: Schema.Array(SomeTask).check(Schema.isBetweenLength(1, 8)) },
