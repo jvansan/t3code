@@ -1189,6 +1189,74 @@ describe("Asana tracker properties", () => {
     runs,
   );
 
+  const Printable = (max: number) =>
+    Schema.String.check(Schema.isPattern(new RegExp(`^[\\x21-\\x7e]{0,${max}}$`)));
+  const ForeignCursor = Schema.Union([
+    Schema.Struct({ kind: Schema.Literal("other"), text: Printable(40) }),
+    Schema.Struct({ kind: Schema.Literal("bare") }),
+    Schema.Struct({
+      kind: Schema.Literal("unprintable"),
+      before: Printable(10),
+      bad: Schema.Literals([" ", "\t", "\n", "\u007f", "\u00e9", "\u2028"]),
+      after: Printable(10),
+    }),
+    Schema.Struct({
+      kind: Schema.Literal("long"),
+      extra: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 40 })),
+    }),
+  ]);
+  const foreignCursorOf = (foreign: typeof ForeignCursor.Type) => {
+    switch (foreign.kind) {
+      case "other":
+        return foreign.text.startsWith("a1.") ? `b${foreign.text}` : foreign.text;
+      case "bare":
+        return "a1.";
+      case "unprintable":
+        return `a1.${foreign.before}${foreign.bad}${foreign.after}`;
+      case "long":
+        return `a1.${"x".repeat(4094 + foreign.extra)}`;
+    }
+  };
+
+  it.effect.prop(
+    "Feature: asana-issue-tracker, Property 4: Cursors round-trip, stay bounded, and reject anything foreign",
+    {
+      offset: Schema.String.check(Schema.isPattern(/^[\x21-\x7e]{1,4093}$/)),
+      foreign: ForeignCursor,
+    },
+    ({ offset, foreign }) =>
+      Effect.gen(function* () {
+        const cursor = AsanaApi.encodeCursor(offset);
+        expect(cursor).not.toBeNull();
+        expect((cursor ?? "").length).toBeLessThanOrEqual(4096);
+        expect(AsanaApi.decodeCursor(cursor ?? "")).toBe(offset);
+
+        const stray = foreignCursorOf(foreign);
+        expect(/^a1\.[\x21-\x7e]{1,4093}$/.test(stray)).toBe(false);
+        expect(AsanaApi.decodeCursor(stray)).toBeNull();
+        const fake = fakeAsana();
+        const [listing, comments] = yield* withTracker(fake, (tracker) =>
+          Effect.all([
+            Effect.flip(
+              tracker.listIssues({
+                ...SCOPE,
+                state: "all",
+                involvement: "all",
+                sort: "updated",
+                limit: 50,
+                cursor: stray,
+              }),
+            ),
+            Effect.flip(tracker.getComments({ ...SCOPE, key: "7001", cursor: stray })),
+          ]),
+        );
+        expect(listing.reason).toBe("failed");
+        expect(comments.reason).toBe("failed");
+        expect(fake.requests).toEqual([]);
+      }),
+    runs,
+  );
+
   it.effect.prop(
     "Feature: asana-issue-tracker, Property 8: A task maps to a summary field for field",
     { tasks: Schema.Array(SomeTask).check(Schema.isBetweenLength(1, 8)) },
