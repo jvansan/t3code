@@ -1666,6 +1666,88 @@ describe("Asana tracker properties", () => {
     runs,
   );
 
+  const EVENT_KINDS: Readonly<Record<string, string>> = {
+    marked_complete: "closed",
+    marked_incomplete: "reopened",
+    assigned: "assigned",
+    unassigned: "unassigned",
+    added_to_tag: "labeled",
+    removed_from_tag: "unlabeled",
+    name_changed: "renamed",
+  };
+  const EventStory = Schema.Struct({
+    type: Schema.Literals(["comment", "system"]),
+    subtype: Schema.Literals([
+      ...(Object.keys(EVENT_KINDS) as [string, ...Array<string>]),
+      "comment_added",
+      "liked",
+      "due_date_changed",
+      "attachment_added",
+    ]),
+    createdBy: Schema.NullOr(SomeUser),
+    assignee: Schema.NullOr(SomeUser),
+    tagName: Schema.NullOr(Text),
+    newName: Schema.NullOr(Text),
+    text: Text,
+  });
+
+  it.effect.prop(
+    "Feature: asana-issue-tracker, Property 9: System stories map to events by the subtype table",
+    { stories: Schema.Array(EventStory).check(Schema.isBetweenLength(0, 100)) },
+    ({ stories }) =>
+      Effect.gen(function* () {
+        const fakeStories = stories.map((source, index): FakeStory => ({
+          gid: String(8400 + index),
+          task: "7001",
+          type: source.type,
+          resource_subtype: source.subtype,
+          text: source.text,
+          created_at: at(index * 60),
+          created_by: source.createdBy,
+          assignee: source.assignee,
+          tag: source.tagName === null ? null : { gid: "6900", name: source.tagName },
+          new_name: source.newName,
+        }));
+        const fake = fakeAsana({ model: { stories: fakeStories } });
+        const detail = yield* withTracker(fake, (tracker) =>
+          tracker.getIssue({ ...SCOPE, key: "7001" }),
+        );
+        const subjectOf = (story: FakeStory) => {
+          switch (story.resource_subtype) {
+            case "assigned":
+              return story.assignee
+                ? story.assignee.name?.trim() || actorOf(story.assignee).login
+                : null;
+            case "added_to_tag":
+            case "removed_from_tag":
+              return story.tag?.name ?? null;
+            case "name_changed":
+              return story.new_name ?? null;
+            default:
+              return null;
+          }
+        };
+        const expected = fakeStories.flatMap((story) => {
+          const kind = EVENT_KINDS[story.resource_subtype];
+          if (story.type !== "system" || kind === undefined) return [];
+          return [
+            {
+              id: story.gid,
+              kind,
+              actor: story.created_by === null ? null : actorOf(story.created_by),
+              createdAt: story.created_at,
+              detail: subjectOf(story)?.trim() || null,
+            },
+          ];
+        });
+        expect(detail.events).toEqual(expected);
+        for (const event of detail.events) {
+          expect(event.detail === null || event.detail.trim() !== "").toBe(true);
+        }
+      }),
+    runs,
+  );
+
   it.effect.prop(
     "Feature: asana-issue-tracker, Property 8: A task maps to a summary field for field",
     { tasks: Schema.Array(SomeTask).check(Schema.isBetweenLength(1, 8)) },
