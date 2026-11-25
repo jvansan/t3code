@@ -381,11 +381,7 @@ export const make = Effect.gen(function* () {
     // Executed once: no retry policy is attached.
     const response = yield* httpClient
       .execute(prepared)
-      .pipe(
-        Effect.mapError(() =>
-          fail(operation, "failed", redactSecret("Asana could not be reached.", token)),
-        ),
-      );
+      .pipe(Effect.mapError(() => fail(operation, "failed", "Asana could not be reached.")));
 
     const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
 
