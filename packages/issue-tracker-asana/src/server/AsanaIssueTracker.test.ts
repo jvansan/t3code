@@ -1618,6 +1618,55 @@ describe("Asana tracker properties", () => {
   );
 
   it.effect.prop(
+    "Feature: asana-issue-tracker, Property 7: Detail and older comment pages reassemble the conversation",
+    {
+      count: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 300 })),
+      systems: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 5 })),
+      pageSize: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+    },
+    ({ count, systems, pageSize }) =>
+      Effect.gen(function* () {
+        const comments = Array.from({ length: count }, (_, index) =>
+          comment(String(8300 + index), "7001", `Comment ${index}`, at(index * 60)),
+        );
+        const noise = Array.from({ length: systems }, (_, index) => ({
+          gid: String(8900 + index),
+          task: "7001",
+          type: "system" as const,
+          resource_subtype: "marked_complete",
+          text: "completed this task",
+          created_at: at(index * 60 + 30),
+          created_by: THEO,
+        }));
+        const fake = fakeAsana({ model: { stories: [...noise, ...comments], pageSize } });
+        const detail = yield* withTracker(fake, (tracker) =>
+          tracker.getIssue({ ...SCOPE, key: "7001" }),
+        );
+        const chronological = (page: ReadonlyArray<{ readonly createdAt: string }>) =>
+          page
+            .map((entry) => entry.createdAt)
+            .every((value, index, all) => index === 0 || (all[index - 1] ?? "") <= value);
+        expect(detail.comments.length).toBeLessThanOrEqual(50);
+        expect(chronological(detail.comments)).toBe(true);
+        const assembled = [...detail.comments];
+        let cursor = detail.commentsCursor;
+        for (let round = 0; round < 400 && cursor !== null; round += 1) {
+          expect(assembled.length).toBeLessThan(count);
+          const page = yield* withTracker(fake, (tracker) =>
+            tracker.getComments({ ...SCOPE, key: "7001", cursor: cursor ?? "" }),
+          );
+          expect(page.comments.length).toBeLessThanOrEqual(50);
+          expect(chronological(page.comments)).toBe(true);
+          assembled.unshift(...page.comments);
+          cursor = page.nextCursor;
+        }
+        expect(assembled.map((entry) => entry.id)).toEqual(comments.map((story) => story.gid));
+        expect(assembled.map((entry) => entry.body)).toEqual(comments.map((story) => story.text));
+      }),
+    runs,
+  );
+
+  it.effect.prop(
     "Feature: asana-issue-tracker, Property 8: A task maps to a summary field for field",
     { tasks: Schema.Array(SomeTask).check(Schema.isBetweenLength(1, 8)) },
     ({ tasks }) =>
