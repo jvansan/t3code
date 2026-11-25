@@ -1,0 +1,272 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1. Install dependencies and record a clean baseline": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737767
+      },
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634740574
+      },
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634935917
+      }
+    ],
+    "2. Scaffold the `@t3tools/issue-tracker-asana` package": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737770
+      },
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634939378
+      }
+    ],
+    "3.1 Implement `parseAsanaTaskUrl` with example tests": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737774
+      }
+    ],
+    "3.2 Write property test for accepted task URLs": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737776
+      }
+    ],
+    "3.3 Write property test for the format-then-parse round trip": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737778
+      }
+    ],
+    "3.4 Write property test for rejected URL mutations": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737780
+      }
+    ],
+    "4.1 Add Asana schemas and pure helpers": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737782
+      }
+    ],
+    "4.2 Implement the `request` core and the `AsanaApi` service, with the fake Asana harness": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737784
+      }
+    ],
+    "4.3 Write property test for error mapping without retry": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737786
+      }
+    ],
+    "4.4 Write property test for token redaction": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737788
+      }
+    ],
+    "5.1 Add the descriptor, capabilities, mapping helpers, probe, and viewer": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737789
+      }
+    ],
+    "5.2 Write property test for summary mapping": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737791
+      }
+    ],
+    "5.3 Write property test for the credential probe": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737792
+      }
+    ],
+    "5.4 Implement `listIssues`": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737793
+      }
+    ],
+    "5.5 Write property test for cursors": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737794
+      }
+    ],
+    "5.6 Write model-based property test for listing pages": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737795
+      }
+    ],
+    "5.7 Implement `getIssue`, `getIssueLink`, and `getComments`": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737796
+      }
+    ],
+    "5.8 Write model-based property test for comment paging": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737797
+      }
+    ],
+    "5.9 Write property test for story-to-event mapping": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737798
+      }
+    ],
+    "6.1 Implement the write guards, `create`, `comment`, `update`, and `setState`": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737799
+      }
+    ],
+    "6.2 Write property test for write guards": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737800
+      }
+    ],
+    "6.3 Write property test for label resolution": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737800
+      }
+    ],
+    "6.4 Write round-trip property test for title and body writes": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737801
+      }
+    ],
+    "6.5 Implement `listCandidates`": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737802
+      }
+    ],
+    "6.6 Write property test for consistent logins": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737803
+      }
+    ],
+    "6.7 Write property test for Bearer auth on every request": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737804
+      }
+    ],
+    "7.1 Add the driver and register it after Linear": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737805
+      }
+    ],
+    "8. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737807
+      }
+    ],
+    "9.1 Resolve Asana task links in `issueLinks.ts`": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737807
+      }
+    ],
+    "9.2 Prefix `#` only for git-host keys in workflow labels": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737808
+      }
+    ],
+    "10.1 Add the Asana icon, presentation entries, and right-panel tab label": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737809
+      }
+    ],
+    "10.2 Find the issue tracker settings by searching `asana`, with regenerated catalogs": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737810
+      }
+    ],
+    "11. Show Asana on the mobile client": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737811
+      }
+    ],
+    "12. Document connecting Asana": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737812
+      }
+    ],
+    "13. Add the Asana package to the release smoke list": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737813
+      }
+    ],
+    "14. Final checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "630d4079-e97d-4711-9dd0-dfef28146180",
+        "chatSessionId": "sess_765e37af-34f4-4661-ac83-48683afcfaf5",
+        "timestamp": 1795634737814
+      }
+    ]
+  }
+}
