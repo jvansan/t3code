@@ -619,8 +619,10 @@ function surfaceTitle(
     case "pull-requests":
       return resolve(msg("Linked items"));
     case "issue":
-      // A git host numbers its issues; a tracker with keys of its own, such as Linear, names them.
-      return /^\d+$/.test(surface.key) ? `#${surface.key}` : surface.key;
+      // A git host numbers its issues; a standalone tracker uses keys of its own, even all-digit ones.
+      return sourceControlClients.find(surface.tracker) !== undefined && /^\d+$/.test(surface.key)
+        ? `#${surface.key}`
+        : surface.key;
     case "device":
       return surface.title ?? surface.target?.name ?? resolve(msg("Device"));
     case "thread":
