@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -960,5 +961,105 @@ describe("AsanaIssueTracker", () => {
         `Bearer ${STORED_TOKEN}`,
       ]);
     }),
+  );
+});
+
+const SummaryGid = Schema.String.check(Schema.isPattern(/^[1-9]\d{0,15}$/));
+const Text = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9 ]{0,12}$/));
+const Email = Schema.String.check(Schema.isPattern(/^[a-z]{1,8}@acme\.test$/));
+const Avatar = Schema.String.check(Schema.isPattern(/^https:\/\/asana\.test\/[a-z]{1,8}\.png$/));
+const SomeUser = Schema.Struct({
+  gid: SummaryGid,
+  name: Schema.NullOr(Text),
+  email: Schema.NullOr(Email),
+  photo: Schema.NullOr(Schema.Struct({ image_60x60: Schema.NullOr(Avatar) })),
+});
+const Seconds = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 10_000_000 }));
+const EPOCH = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"));
+const at = (seconds: number) => DateTime.formatIso(DateTime.makeUnsafe(EPOCH + seconds * 1000));
+const SomeTag = Schema.Struct({
+  gid: SummaryGid,
+  name: Text,
+  color: Schema.NullOr(Schema.Literals(["dark-red", "light-blue", "neon-green"])),
+});
+const SomeTask = Schema.Struct({
+  name: Text,
+  completed: Schema.Boolean,
+  completedAt: Schema.NullOr(Seconds),
+  createdAt: Seconds,
+  modifiedAt: Seconds,
+  assignee: Schema.NullOr(SomeUser),
+  createdBy: Schema.NullOr(SomeUser),
+  tags: Schema.Array(SomeTag).check(Schema.isBetweenLength(0, 4)),
+  fieldName: Schema.Literals(["Eng. ID", "Priority"]),
+  fieldValue: Schema.NullOr(Text),
+});
+type SomeTask = typeof SomeTask.Type;
+
+const KNOWN_HEX: Readonly<Record<string, string>> = {
+  "dark-red": "#c43c39",
+  "light-blue": "#a7c6f5",
+};
+const actorOf = (user: FakeUser) => ({
+  login: user.email?.trim() || user.gid,
+  name: user.name?.trim() || null,
+  avatarUrl: user.photo?.image_60x60 ?? null,
+});
+const fakeTaskOf = (gid: string, source: SomeTask): FakeTask =>
+  task(gid, {
+    name: source.name,
+    completed: source.completed,
+    completed_at: source.completedAt === null ? null : at(source.completedAt),
+    created_at: at(source.createdAt),
+    modified_at: at(source.modifiedAt),
+    assignee: source.assignee,
+    created_by: source.createdBy,
+    tags: source.tags,
+    custom_fields: [{ gid: "8001", name: source.fieldName, display_value: source.fieldValue }],
+  });
+
+describe("Asana tracker properties", () => {
+  it.effect.prop(
+    "Feature: asana-issue-tracker, Property 8: A task maps to a summary field for field",
+    { tasks: Schema.Array(SomeTask).check(Schema.isBetweenLength(1, 8)) },
+    ({ tasks }) =>
+      Effect.gen(function* () {
+        const fakeTasks = tasks.map((source, index) => fakeTaskOf(String(7100 + index), source));
+        const fake = fakeAsana({ model: { tasks: fakeTasks } });
+        const page = yield* withTracker(fake, (tracker) =>
+          tracker.listIssues({
+            ...SCOPE,
+            state: "all",
+            involvement: "all",
+            sort: "updated",
+            limit: 100,
+          }),
+        );
+        expect(page.items).toHaveLength(fakeTasks.length);
+        for (const source of fakeTasks) {
+          const engId = source.custom_fields.find((field) => field.name === "Eng. ID");
+          expect(page.items.find((item) => item.key === source.gid)).toEqual({
+            key: source.gid,
+            displayKey: engId?.display_value?.trim() || source.gid,
+            title: source.name.trim() || "Untitled task",
+            url: source.permalink_url,
+            author: source.created_by === null ? null : actorOf(source.created_by),
+            state: source.completed
+              ? { category: "closed", name: "Completed", closeReason: "completed" }
+              : { category: "open", name: "Incomplete" },
+            createdAt: source.created_at,
+            updatedAt: source.modified_at,
+            closedAt: source.completed_at,
+            assignees: source.assignee === null ? [] : [actorOf(source.assignee)],
+            labels: source.tags.flatMap((tag) =>
+              tag.name.trim() === ""
+                ? []
+                : [{ name: tag.name.trim(), color: KNOWN_HEX[tag.color ?? ""] ?? null }],
+            ),
+            commentCount: 0,
+          });
+        }
+      }),
+    runs,
   );
 });
