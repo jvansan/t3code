@@ -268,7 +268,7 @@ export const make = Effect.gen(function* () {
           }`,
         );
       }
-      gids.push(tag.gid);
+      if (!gids.includes(tag.gid)) gids.push(tag.gid);
     }
     return gids;
   });
