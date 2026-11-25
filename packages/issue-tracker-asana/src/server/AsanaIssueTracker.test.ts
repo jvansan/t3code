@@ -950,6 +950,120 @@ describe("AsanaIssueTracker", () => {
     }),
   );
 
+  it.effect("lists a project's tasks with the summary fields and Asana's own filters", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana();
+      const [open, mentioned] = yield* withTracker(fake, (tracker) =>
+        Effect.all([
+          tracker.listIssues({
+            ...SCOPE,
+            state: "open",
+            involvement: "all",
+            sort: "updated",
+            limit: 150,
+          }),
+          tracker.listIssues({
+            ...SCOPE,
+            state: "all",
+            involvement: "mentioned",
+            viewer: JULIUS.email ?? "",
+            sort: "created",
+            limit: 20,
+          }),
+        ]),
+      );
+      expect(open.items.map((item) => item.key)).toEqual(["7001"]);
+      expect(open.nextCursor).toBeNull();
+      expect(mentioned.items).toEqual([]);
+      const reads = fake.requests.map((request) => {
+        const url = new URL(request.url);
+        return [
+          url.pathname,
+          url.searchParams.get("limit"),
+          url.searchParams.get("completed_since"),
+          optFieldsOf(request),
+        ];
+      });
+      expect(reads).toEqual(
+        expect.arrayContaining([
+          [`/api/1.0/projects/${PROJECT.gid}/tasks`, "100", "now", TASK_SUMMARY],
+          [`/api/1.0/projects/${PROJECT.gid}/tasks`, "20", null, `${TASK_SUMMARY},followers.email`],
+          ["/api/1.0/users/me", null, null, "name,email,workspaces.name"],
+        ]),
+      );
+      expect(reads).toHaveLength(3);
+    }),
+  );
+
+  it.effect("hands back the next cursor even when filters left the page empty", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana({ model: { pageSize: 1 } });
+      const page = yield* withTracker(fake, (tracker) =>
+        tracker.listIssues({
+          ...SCOPE,
+          state: "closed",
+          involvement: "all",
+          sort: "updated",
+          limit: 100,
+        }),
+      );
+      expect(page.items).toEqual([]);
+      expect(page.nextCursor).toBe("a1.fake-offset-1");
+      const next = yield* withTracker(fake, (tracker) =>
+        tracker.listIssues({
+          ...SCOPE,
+          state: "closed",
+          involvement: "all",
+          sort: "updated",
+          limit: 100,
+          cursor: page.nextCursor ?? "",
+        }),
+      );
+      expect(next.items.map((item) => item.key)).toEqual(["7002"]);
+      expect(next.nextCursor).toBeNull();
+      expect(new URL(fake.requests[1]?.url ?? "").searchParams.get("offset")).toBe("fake-offset-1");
+    }),
+  );
+
+  it.effect("an expired offset fails with the reload detail", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana();
+      const error = yield* withTracker(fake, (tracker) =>
+        Effect.flip(
+          tracker.listIssues({
+            ...SCOPE,
+            state: "all",
+            involvement: "all",
+            sort: "updated",
+            limit: 50,
+            cursor: "a1.stale-offset",
+          }),
+        ),
+      );
+      expect(error.reason).toBe("failed");
+      expect(error.detail).toBe("Asana's page token expired. Reload the list.");
+      expect(fake.requests).toHaveLength(1);
+    }),
+  );
+
+  it.effect("a foreign cursor or a non-gid scope fails before any request", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana();
+      const listing = { state: "all", involvement: "all", sort: "updated", limit: 50 } as const;
+      const foreign = yield* withTracker(fake, (tracker) =>
+        Effect.flip(tracker.listIssues({ ...SCOPE, ...listing, cursor: "linear:abc" })),
+      );
+      expect(foreign.reason).toBe("failed");
+      expect(foreign.detail).toBe("This Asana list position is no longer valid. Reload the list.");
+      const named = yield* withTracker(fake, (tracker) =>
+        Effect.flip(tracker.listIssues({ ...SCOPE, ...listing, scope: "ENG" })),
+      );
+      expect(named.reason).toBe("failed");
+      expect(named.detail).toBe("Asana projects are named by gid.");
+      expect(fake.requests).toEqual([]);
+    }),
+  );
+
   it.effect("the viewer is the stored token's user, by email", () =>
     Effect.gen(function* () {
       const fake = fakeAsana();
