@@ -2202,6 +2202,82 @@ describe("Asana tracker properties", () => {
     runs,
   );
 
+  const TagIndex = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 5 }));
+  const Casing = Schema.Literals(["as-is", "upper", "lower", "padded"]);
+  const spell = (name: string, casing: typeof Casing.Type) => {
+    switch (casing) {
+      case "as-is":
+        return name;
+      case "upper":
+        return name.toUpperCase();
+      case "lower":
+        return name.toLowerCase();
+      case "padded":
+        return `  ${name} `;
+    }
+  };
+
+  it.effect.prop(
+    "Feature: asana-issue-tracker, Property 15: Labels resolve to workspace tags and change by difference",
+    {
+      names: Schema.Array(Text).check(Schema.isBetweenLength(1, 6)),
+      current: Schema.Array(TagIndex).check(Schema.isBetweenLength(0, 6)),
+      requested: Schema.Array(Schema.Struct({ tag: TagIndex, casing: Casing })).check(
+        Schema.isBetweenLength(0, 6),
+      ),
+    },
+    ({ names, current, requested }) =>
+      Effect.gen(function* () {
+        const seen = new Set<string>();
+        const tags = names.flatMap((name, index): Array<FakeTag> => {
+          const key = name.trim().toLowerCase();
+          if (key === "" || seen.has(key)) return [];
+          seen.add(key);
+          return [{ ...BUG_TAG, gid: String(6100 + index), name }];
+        });
+        if (tags.length === 0) tags.push(BUG_TAG);
+        const pick = (index: number) => tags[index % tags.length] ?? BUG_TAG;
+        const currentTags = unique(current.map(pick));
+        const labels = requested.map(({ tag, casing }) => spell(pick(tag).name, casing));
+        const wanted = unique(requested.map(({ tag }) => pick(tag).gid));
+        const currentGids = currentTags.map((tag) => tag.gid);
+        const fake = fakeAsana({
+          model: { tasks: [task("7001", { tags: currentTags.map(tagRef) })], tags },
+        });
+
+        yield* withTracker(
+          fake,
+          (tracker) => tracker.update?.({ ...SCOPE, key: "7001", labels }) ?? Effect.die("none"),
+        );
+        const tagWrites = fake.requests.filter(isWrite).map((request) => {
+          const path = new URL(request.url).pathname;
+          return [
+            path.slice(path.lastIndexOf("/") + 1),
+            (request.body as { data: { tag: string } }).data.tag,
+          ];
+        });
+        expect(tagWrites).toEqual([
+          ...wanted.filter((gid) => !currentGids.includes(gid)).map((gid) => ["addTag", gid]),
+          ...currentGids.filter((gid) => !wanted.includes(gid)).map((gid) => ["removeTag", gid]),
+        ]);
+        expect(fake.model.tasks[0]?.tags.map((tag) => tag.gid).sort()).toEqual([...wanted].sort());
+
+        const before = fake.requests.length;
+        yield* withTracker(
+          fake,
+          (tracker) =>
+            tracker.create?.({ ...SCOPE, title: "T", body: "", labels, assignees: [] }) ??
+            Effect.die("none"),
+        );
+        const posted = fake.requests.slice(before).filter(isWrite);
+        expect(posted).toHaveLength(1);
+        const data = (posted[0]?.body as { data: Record<string, unknown> } | undefined)?.data;
+        expect(data?.["tags"]).toEqual(wanted.length === 0 ? undefined : wanted);
+        expect(fake.model.tasks.at(-1)?.tags.map((tag) => tag.gid)).toEqual(wanted);
+      }),
+    runs,
+  );
+
   it.effect.prop(
     "Feature: asana-issue-tracker, Property 8: A task maps to a summary field for field",
     { tasks: Schema.Array(SomeTask).check(Schema.isBetweenLength(1, 8)) },
