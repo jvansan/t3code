@@ -92,6 +92,8 @@ interface FakeModel {
   tags: Array<FakeTag>;
   /** The most items one page holds, whatever `limit` asks; unset serves `limit`. */
   pageSize?: number;
+  /** The custom fields Asana gives a task created in this model, such as a project's `Eng. ID`. */
+  createdFields?: ReadonlyArray<FakeCustomField>;
 }
 interface RecordedRequest {
   readonly method: string;
@@ -299,6 +301,7 @@ function answer(
       assignee: typeof assignee === "string" ? toUser(model, assignee) : null,
       created_by: model.me,
       tags: tags.flatMap((tag) => (tag === undefined ? [] : [tagRef(tag)])),
+      custom_fields: model.createdFields ?? [],
       memberships: projects.flatMap((project) =>
         project === undefined ? [] : [{ project: { gid: project.gid, name: project.name } }],
       ),
@@ -1285,6 +1288,349 @@ describe("AsanaIssueTracker", () => {
       expect(fake.requests.map((request) => request.authorization)).toEqual([
         `Bearer ${STORED_TOKEN}`,
       ]);
+    }),
+  );
+
+  const writes = (fake: ReturnType<typeof fakeAsana>) =>
+    fake.requests
+      .filter((request) => request.method !== "GET")
+      .map((request) => [request.method, new URL(request.url).pathname, request.body]);
+
+  it.effect("creates a task in the project with its tags and assignee, shown by its Eng. ID", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana({
+        model: { createdFields: [{ gid: "8001", name: "Eng. ID", display_value: "ENG-121" }] },
+      });
+      const created = yield* withTracker(
+        fake,
+        (tracker) =>
+          tracker.create?.({
+            ...SCOPE,
+            title: "Ship it",
+            body: "Body\n\nwith **markdown**",
+            labels: [" bug "],
+            assignees: [THEO.gid],
+          }) ?? Effect.die("no create"),
+      );
+      const gid = fake.model.tasks.at(-1)?.gid ?? "";
+      expect(created).toEqual({
+        key: gid,
+        displayKey: "ENG-121",
+        url: permalink(WORKSPACE.gid, PROJECT.gid, gid),
+      });
+      expect(fake.requests.map((request) => new URL(request.url).pathname)).toEqual([
+        `/api/1.0/projects/${PROJECT.gid}`,
+        "/api/1.0/tags",
+        "/api/1.0/tasks",
+      ]);
+      expect(writes(fake)).toEqual([
+        [
+          "POST",
+          "/api/1.0/tasks",
+          {
+            data: {
+              name: "Ship it",
+              notes: "Body\n\nwith **markdown**",
+              projects: [PROJECT.gid],
+              tags: [BUG_TAG.gid],
+              assignee: THEO.gid,
+            },
+            options: {
+              fields: ["permalink_url", "custom_fields.name", "custom_fields.display_value"],
+            },
+          },
+        ],
+      ]);
+    }),
+  );
+
+  it.effect("a created task without an Eng. ID is shown by its gid, assigned by email", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana();
+      const [byEmail, unassigned] = yield* withTracker(fake, (tracker) =>
+        Effect.all([
+          tracker.create?.({
+            ...SCOPE,
+            title: "By email",
+            body: "",
+            labels: [],
+            assignees: [THEO.email ?? ""],
+          }) ?? Effect.die("no create"),
+          tracker.create?.({ ...SCOPE, title: "Nobody", body: "", labels: [], assignees: [] }) ??
+            Effect.die("no create"),
+        ]),
+      );
+      const [first, second] = fake.model.tasks.slice(-2);
+      expect(byEmail).toEqual({
+        key: first?.gid,
+        displayKey: first?.gid,
+        url: permalink(WORKSPACE.gid, PROJECT.gid, first?.gid ?? ""),
+      });
+      expect(unassigned.displayKey).toBe(second?.gid);
+      expect(writes(fake).map((write) => (write[2] as { data: unknown }).data)).toEqual([
+        { name: "By email", notes: "", projects: [PROJECT.gid], assignee: THEO.email },
+        { name: "Nobody", notes: "", projects: [PROJECT.gid] },
+      ]);
+      expect(fake.requests.some((request) => request.url.endsWith("/tags"))).toBe(false);
+    }),
+  );
+
+  it.effect("a create names a missing project or a non-gid scope before writing", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana();
+      const input = { ...SCOPE, title: "T", body: "", labels: [], assignees: [] };
+      const named = yield* withTracker(fake, (tracker) =>
+        Effect.flip(tracker.create?.({ ...input, scope: "ENG" }) ?? Effect.die("no create")),
+      );
+      expect(named.reason).toBe("failed");
+      expect(named.detail).toBe("Asana projects are named by gid.");
+      expect(fake.requests).toEqual([]);
+      const missing = yield* withTracker(fake, (tracker) =>
+        Effect.flip(tracker.create?.({ ...input, scope: "5999" }) ?? Effect.die("no create")),
+      );
+      expect(missing.reason).toBe("failed");
+      expect(missing.detail).toBe("No Asana project has gid 5999, or this account cannot see it.");
+      expect(writes(fake)).toEqual([]);
+    }),
+  );
+
+  it.effect("updates only the named fields, and an empty assignee list clears the assignee", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana({
+        model: { tasks: [task("7001", { assignee: THEO, tags: [tagRef(BUG_TAG)] })] },
+      });
+      yield* withTracker(fake, (tracker) =>
+        Effect.gen(function* () {
+          yield* (
+            tracker.update?.({ ...SCOPE, key: "7001", title: "Renamed" }) ?? Effect.die("no update")
+          );
+          yield* (
+            tracker.update?.({ ...SCOPE, key: "7001", body: "New body", assignees: [] }) ??
+            Effect.die("no update")
+          );
+          yield* (
+            tracker.update?.({ ...SCOPE, key: "7001", assignees: [JULIUS.email ?? ""] }) ??
+            Effect.die("no update")
+          );
+        }),
+      );
+      expect(writes(fake)).toEqual([
+        ["PUT", "/api/1.0/tasks/7001", { data: { name: "Renamed" } }],
+        ["PUT", "/api/1.0/tasks/7001", { data: { notes: "New body", assignee: null } }],
+        ["PUT", "/api/1.0/tasks/7001", { data: { assignee: JULIUS.email } }],
+      ]);
+      const stored = fake.model.tasks[0];
+      expect(stored?.name).toBe("Renamed");
+      expect(stored?.notes).toBe("New body");
+      expect(stored?.assignee?.gid).toBe(JULIUS.gid);
+      expect(stored?.tags).toEqual([tagRef(BUG_TAG)]);
+    }),
+  );
+
+  it.effect("updates labels by difference, one tag request each, after the field write", () =>
+    Effect.gen(function* () {
+      const feature: FakeTag = { ...BUG_TAG, gid: "6002", name: "Feature" };
+      const fake = fakeAsana({
+        model: {
+          tasks: [task("7001", { tags: [tagRef(BUG_TAG)] })],
+          tags: [BUG_TAG, feature],
+        },
+      });
+      yield* withTracker(fake, (tracker) =>
+        Effect.gen(function* () {
+          yield* (
+            tracker.update?.({ ...SCOPE, key: "7001", title: "T", labels: ["FEATURE"] }) ??
+            Effect.die("no update")
+          );
+          yield* tracker.update?.({ ...SCOPE, key: "7001", labels: [] }) ?? Effect.die("no update");
+        }),
+      );
+      expect(writes(fake)).toEqual([
+        ["PUT", "/api/1.0/tasks/7001", { data: { name: "T" } }],
+        ["POST", "/api/1.0/tasks/7001/addTag", { data: { tag: feature.gid } }],
+        ["POST", "/api/1.0/tasks/7001/removeTag", { data: { tag: BUG_TAG.gid } }],
+        ["POST", "/api/1.0/tasks/7001/removeTag", { data: { tag: feature.gid } }],
+      ]);
+      expect(fake.model.tasks[0]?.tags).toEqual([]);
+      const tagReads = fake.requests.filter((request) => request.url.includes("/tags?"));
+      expect(tagReads).toHaveLength(1);
+    }),
+  );
+
+  it.effect("comments on a task after proving it is in the project", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana();
+      yield* withTracker(
+        fake,
+        (tracker) =>
+          tracker.comment?.({ ...SCOPE, key: "7001", body: "Looks good." }) ??
+          Effect.die("no comment"),
+      );
+      expect(
+        fake.requests.map((request) => [request.method, new URL(request.url).pathname]),
+      ).toEqual([
+        ["GET", "/api/1.0/tasks/7001"],
+        ["POST", "/api/1.0/tasks/7001/stories"],
+      ]);
+      expect(
+        optFieldsOf(fake.requests[0] ?? { method: "", url: "", authorization: "", body: null }),
+      ).toBe("memberships.project,tags.name,workspace");
+      expect(fake.requests[1]?.body).toEqual({ data: { text: "Looks good." } });
+      expect(fake.model.stories.map((story) => [story.task, story.text])).toEqual([
+        ["7001", "Looks good."],
+      ]);
+    }),
+  );
+
+  it.effect("completes and reopens a task by its two state names", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana();
+      yield* withTracker(fake, (tracker) =>
+        Effect.gen(function* () {
+          yield* (
+            tracker.setState?.({ ...SCOPE, key: "7001", state: "Completed" }) ??
+            Effect.die("no setState")
+          );
+          yield* (
+            tracker.setState?.({ ...SCOPE, key: "7002", state: "Incomplete" }) ??
+            Effect.die("no setState")
+          );
+        }),
+      );
+      expect(writes(fake)).toEqual([
+        ["PUT", "/api/1.0/tasks/7001", { data: { completed: true } }],
+        ["PUT", "/api/1.0/tasks/7002", { data: { completed: false } }],
+      ]);
+      expect(
+        fake.model.tasks.map((entry) => [entry.gid, entry.completed, entry.completed_at]),
+      ).toEqual([
+        ["7001", true, FAKE_NOW],
+        ["7002", false, null],
+      ]);
+    }),
+  );
+
+  it.effect("a task in two projects takes a write through either project", () =>
+    Effect.gen(function* () {
+      const other: FakeProject = { ...PROJECT, gid: "5002", name: "Mobile" };
+      const fake = fakeAsana({
+        model: {
+          projects: [PROJECT, other],
+          tasks: [
+            task("7001", {
+              memberships: [
+                { project: { gid: PROJECT.gid, name: PROJECT.name } },
+                { project: { gid: other.gid, name: other.name } },
+              ],
+            }),
+          ],
+        },
+      });
+      yield* withTracker(fake, (tracker) =>
+        Effect.gen(function* () {
+          yield* (
+            tracker.comment?.({ ...SCOPE, key: "7001", body: "From Platform" }) ??
+            Effect.die("no comment")
+          );
+          yield* (
+            tracker.setState?.({ ...SCOPE, scope: other.gid, key: "7001", state: "Completed" }) ??
+            Effect.die("no setState")
+          );
+          yield* (
+            tracker.update?.({ ...SCOPE, scope: other.gid, key: "7001", title: "Both" }) ??
+            Effect.die("no update")
+          );
+        }),
+      );
+      expect(writes(fake).map((write) => write[1])).toEqual([
+        "/api/1.0/tasks/7001/stories",
+        "/api/1.0/tasks/7001",
+        "/api/1.0/tasks/7001",
+      ]);
+    }),
+  );
+
+  it.effect("every refused write names its reason before Asana sees a write", () =>
+    Effect.gen(function* () {
+      const fake = fakeAsana();
+      const outside = { ...SCOPE, scope: "5002", key: "7001" };
+      const errors = yield* withTracker(fake, (tracker) =>
+        Effect.all({
+          commentOutside: Effect.flip(
+            tracker.comment?.({ ...outside, body: "x" }) ?? Effect.die("none"),
+          ),
+          updateOutside: Effect.flip(
+            tracker.update?.({ ...outside, title: "x" }) ?? Effect.die("none"),
+          ),
+          stateOutside: Effect.flip(
+            tracker.setState?.({ ...outside, state: "Completed" }) ?? Effect.die("none"),
+          ),
+          nonGidKey: Effect.flip(
+            tracker.comment?.({ ...SCOPE, key: "ENG-120", body: "x" }) ?? Effect.die("none"),
+          ),
+          missingTask: Effect.flip(
+            tracker.comment?.({ ...SCOPE, key: "7999", body: "x" }) ?? Effect.die("none"),
+          ),
+          unknownState: Effect.flip(
+            tracker.setState?.({ ...SCOPE, key: "7001", state: "Done" }) ?? Effect.die("none"),
+          ),
+          twoAssignees: Effect.flip(
+            tracker.update?.({ ...SCOPE, key: "7001", assignees: [THEO.gid, JULIUS.gid] }) ??
+              Effect.die("none"),
+          ),
+          namedAssignee: Effect.flip(
+            tracker.create?.({ ...SCOPE, title: "T", body: "", labels: [], assignees: ["theo"] }) ??
+              Effect.die("none"),
+          ),
+          unknownLabel: Effect.flip(
+            tracker.update?.({ ...SCOPE, key: "7001", labels: ["Bug", "Urgent"] }) ??
+              Effect.die("none"),
+          ),
+        }),
+      );
+      const seen = Object.fromEntries(
+        Object.entries(errors).map(([name, error]) => [name, [error.reason, error.detail]]),
+      );
+      expect(seen).toEqual({
+        commentOutside: ["failed", "Asana task 7001 is not in project 5002."],
+        updateOutside: ["failed", "Asana task 7001 is not in project 5002."],
+        stateOutside: ["failed", "Asana task 7001 is not in project 5002."],
+        nonGidKey: ["not-found", "Asana tasks are named by gid."],
+        missingTask: ["not-found", "Asana has no such task, or this account cannot see it."],
+        unknownState: ["failed", 'An Asana task is Incomplete or Completed, not "Done".'],
+        twoAssignees: ["failed", "An Asana task has one assignee at most."],
+        namedAssignee: ["failed", "Name an Asana user by gid or email."],
+        unknownLabel: ["failed", 'Asana has no tag named "Urgent" in this workspace.'],
+      });
+      expect(Object.values(errors).every((error) => error.tracker === "asana")).toBe(true);
+      expect(writes(fake)).toEqual([]);
+    }),
+  );
+
+  it.effect("an unknown label names the tag cap when the tag read was cut short", () =>
+    Effect.gen(function* () {
+      const tags = Array.from({ length: 501 }, (_, index) => ({
+        ...BUG_TAG,
+        gid: String(6000 + index),
+        name: `Tag ${index}`,
+      }));
+      const fake = fakeAsana({ model: { tags } });
+      const error = yield* withTracker(fake, (tracker) =>
+        Effect.flip(
+          tracker.create?.({
+            ...SCOPE,
+            title: "T",
+            body: "",
+            labels: ["Tag 500"],
+            assignees: [],
+          }) ?? Effect.die("none"),
+        ),
+      );
+      expect(error.reason).toBe("failed");
+      expect(error.detail).toContain('Asana has no tag named "Tag 500" in this workspace.');
+      expect(error.detail).toContain("among the first 500 tags.");
+      expect(fake.requests.filter((request) => request.url.includes("/tags?"))).toHaveLength(5);
+      expect(writes(fake)).toEqual([]);
     }),
   );
 });
