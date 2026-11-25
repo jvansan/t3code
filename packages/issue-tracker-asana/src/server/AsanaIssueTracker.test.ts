@@ -716,6 +716,10 @@ describe("AsanaApi", () => {
 });
 
 const runs = { arbitrary: { runs: 100 } };
+const windowsOf = (secret: string) =>
+  Array.from({ length: Math.max(0, secret.length - 7) }, (_, index) =>
+    secret.slice(index, index + 8),
+  );
 
 describe("Asana API properties", () => {
   const Status = Schema.Int.check(Schema.isBetween({ minimum: 400, maximum: 599 }));
@@ -820,6 +824,41 @@ describe("Asana API properties", () => {
         expect(error.cause).toBeUndefined();
         expect(error.tracker).toBe("asana");
         expect(error.operation).toBe("listProjectTasks");
+      }),
+    runs,
+  );
+
+  it.effect.prop(
+    "Feature: asana-issue-tracker, Property 12: No error carries any part of the token",
+    {
+      token: Schema.String.check(Schema.isPattern(/^[\x21-\x7e]{8,128}$/)),
+      kind: Schema.Literals(["whole", "prefix", "substring"]),
+      start: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 127 })),
+      length: Schema.Int.check(Schema.isBetween({ minimum: 8, maximum: 128 })),
+      before: Schema.String.check(Schema.isPattern(/^[a-z ]{0,16}$/)),
+      after: Schema.String.check(Schema.isPattern(/^[a-z ]{0,16}$/)),
+    },
+    ({ token, kind, start, length, before, after }) =>
+      Effect.gen(function* () {
+        const size = Math.min(length, token.length);
+        const from = Math.min(start, token.length - size);
+        const fragment =
+          kind === "whole"
+            ? token
+            : kind === "prefix"
+              ? token.slice(0, size)
+              : token.slice(from, from + size);
+        const message = `${before}${fragment}${after}`;
+        const fake = fakeAsana({
+          respond: () => Response.json({ errors: [{ message, help: "" }] }, { status: 400 }),
+        });
+        const error = yield* withApi(fake, (api) => Effect.flip(api.me(token)));
+        expect(error.reason).toBe("failed");
+        for (const window of windowsOf(token)) {
+          expect(error.detail).not.toContain(window);
+          expect(error.message).not.toContain(window);
+        }
+        expect(error.detail).toContain("[redacted]");
       }),
     runs,
   );
