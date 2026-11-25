@@ -16,7 +16,7 @@ import * as IssueTrackerHost from "@t3tools/source-control-core/server/IssueTrac
 
 import { ASANA_KIND } from "../shared/issueUrl.ts";
 
-export const KIND = ASANA_KIND;
+const KIND = ASANA_KIND;
 const DEFAULT_API_URL = "https://app.asana.com/api/1.0";
 /** The most pages one list read follows, so a runaway offset cannot loop forever. */
 const MAX_LIST_PAGES = 50;
@@ -38,29 +38,29 @@ export const AsanaUser = Schema.Struct({
 export type AsanaUser = typeof AsanaUser.Type;
 
 const AsanaWorkspaceRef = Schema.Struct({ gid: Gid, name: Schema.optional(Schema.String) });
-export const AsanaMe = Schema.Struct({
+const AsanaMe = Schema.Struct({
   ...AsanaUser.fields,
   workspaces: Schema.Array(AsanaWorkspaceRef),
 });
-export type AsanaMe = typeof AsanaMe.Type;
+type AsanaMe = typeof AsanaMe.Type;
 
-export const AsanaProjectRef = Schema.Struct({ gid: Gid, name: Schema.String });
-export type AsanaProjectRef = typeof AsanaProjectRef.Type;
+const AsanaProjectRef = Schema.Struct({ gid: Gid, name: Schema.String });
+type AsanaProjectRef = typeof AsanaProjectRef.Type;
 
-export const AsanaProject = Schema.Struct({
+const AsanaProject = Schema.Struct({
   gid: Gid,
   name: Schema.String,
   workspace: Schema.Struct({ gid: Gid }),
   members: Schema.optional(Schema.Array(AsanaUser)),
 });
-export type AsanaProject = typeof AsanaProject.Type;
+type AsanaProject = typeof AsanaProject.Type;
 
-export const AsanaTag = Schema.Struct({
+const AsanaTag = Schema.Struct({
   gid: Gid,
   name: Schema.String,
   color: optionalNull(Schema.String),
 });
-export type AsanaTag = typeof AsanaTag.Type;
+type AsanaTag = typeof AsanaTag.Type;
 
 const AsanaCustomField = Schema.Struct({
   gid: Schema.optional(Schema.String),
@@ -123,7 +123,7 @@ const AsanaErrorBody = Schema.Struct({
 
 const decodeErrorBody = Schema.decodeOption(Schema.fromJsonString(AsanaErrorBody));
 
-export interface AsanaPage<A> {
+interface AsanaPage<A> {
   readonly data: ReadonlyArray<A>;
   readonly nextOffset: string | null;
 }
@@ -171,7 +171,7 @@ const WINDOW = 8;
  * Replaces every run of `text` covered by a substring of `secret` of 8 or more characters, so no
  * such substring survives. A secret shorter than 8 characters is replaced only where it is whole.
  */
-export function redactSecret(text: string, secret: string): string {
+function redactSecret(text: string, secret: string): string {
   if (secret === "") return text;
   if (secret.length < WINDOW) return text.split(secret).join("[redacted]");
   const windows = new Set<string>();
@@ -196,7 +196,7 @@ export function redactSecret(text: string, secret: string): string {
   return out;
 }
 
-export interface FailedResponse {
+interface FailedResponse {
   readonly operation: string;
   readonly status: number;
   /** The `Retry-After` header, when sent. */
@@ -224,7 +224,7 @@ const fail = (
   });
 
 /** Asana's answer as the tracker's error. Carries no `cause`, and no part of the token. */
-export function toTrackerError(input: FailedResponse): IssueTrackerError {
+function toTrackerError(input: FailedResponse): IssueTrackerError {
   const { operation, status, token } = input;
   const make = (reason: IssueTrackerError["reason"], detail: string, retryAt?: number) =>
     fail(operation, reason, redactSecret(detail, token), retryAt);
@@ -328,7 +328,6 @@ interface RequestInput<A> {
   /** What `data` decodes to. */
   readonly schema: Schema.Decoder<A>;
   readonly token?: string | undefined;
-  readonly notFoundAsNull?: boolean | undefined;
 }
 
 export const make = Effect.gen(function* () {
@@ -351,10 +350,7 @@ export const make = Effect.gen(function* () {
 
   const request = Effect.fn("AsanaApi.request")(function* <A>(
     input: RequestInput<A>,
-  ): Effect.fn.Return<
-    { readonly data: A | null; readonly nextOffset: string | null },
-    IssueTrackerError
-  > {
+  ): Effect.fn.Return<{ readonly data: A; readonly nextOffset: string | null }, IssueTrackerError> {
     const { operation } = input;
     yield* Effect.annotateCurrentSpan({ "asana.operation": operation });
     const token = input.token ?? (yield* storedToken(operation));
@@ -386,9 +382,6 @@ export const make = Effect.gen(function* () {
     const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
 
     if (response.status < 200 || response.status >= 300) {
-      if (input.notFoundAsNull === true && response.status === 404) {
-        return { data: null, nextOffset: null };
-      }
       const now = yield* Clock.currentTimeMillis;
       const body = decodeErrorBody(text);
       return yield* toTrackerError({
@@ -419,24 +412,19 @@ export const make = Effect.gen(function* () {
     };
   });
 
-  const required = <A>(
-    operation: string,
-    result: { readonly data: A | null; readonly nextOffset: string | null },
-  ) =>
-    result.data === null
-      ? Effect.fail(fail(operation, "failed", "Asana answered with a body T3 Code could not read."))
-      : Effect.succeed(result.data);
-
   const one = <A>(input: RequestInput<A>) =>
-    request(input).pipe(Effect.flatMap((result) => required(input.operation, result)));
+    request(input).pipe(Effect.map((result) => result.data));
 
-  const page = <A>(input: RequestInput<ReadonlyArray<A>>) =>
-    request(input).pipe(
-      Effect.flatMap((result) =>
-        Effect.map(required(input.operation, result), (data) => ({
-          data,
-          nextOffset: result.nextOffset,
-        })),
+  const page = <A>(
+    input: RequestInput<ReadonlyArray<A>>,
+  ): Effect.Effect<AsanaPage<A>, IssueTrackerError> => request(input);
+
+  /** Null for an item Asana has not, or this token cannot see: only a 404 maps to `not-found`. */
+  const orNull = <A>(read: Effect.Effect<A, IssueTrackerError>) =>
+    read.pipe(
+      Effect.catchIf(
+        (error) => error.reason === "not-found",
+        () => Effect.succeed(null),
       ),
     );
 
@@ -487,14 +475,15 @@ export const make = Effect.gen(function* () {
     ).pipe(Effect.map((result) => result.items));
 
   const getProject: AsanaApi["Service"]["getProject"] = (gid) =>
-    request({
-      operation: "getProject",
-      method: "GET",
-      path: `/projects/${gid}`,
-      query: { opt_fields: FIELDS.project },
-      schema: AsanaProject,
-      notFoundAsNull: true,
-    }).pipe(Effect.map((result) => result.data));
+    orNull(
+      one({
+        operation: "getProject",
+        method: "GET",
+        path: `/projects/${gid}`,
+        query: { opt_fields: FIELDS.project },
+        schema: AsanaProject,
+      }),
+    );
 
   const listProjectTasks: AsanaApi["Service"]["listProjectTasks"] = (input) =>
     page({
@@ -511,24 +500,26 @@ export const make = Effect.gen(function* () {
     });
 
   const getTask: AsanaApi["Service"]["getTask"] = (gid, fields) =>
-    request({
-      operation: "getTask",
-      method: "GET",
-      path: `/tasks/${gid}`,
-      query: { opt_fields: FIELDS[fields] },
-      schema: AsanaTask,
-      notFoundAsNull: true,
-    }).pipe(Effect.map((result) => result.data));
+    orNull(
+      one({
+        operation: "getTask",
+        method: "GET",
+        path: `/tasks/${gid}`,
+        query: { opt_fields: FIELDS[fields] },
+        schema: AsanaTask,
+      }),
+    );
 
   const getTaskDetail: AsanaApi["Service"]["getTaskDetail"] = (gid) =>
-    request({
-      operation: "getTaskDetail",
-      method: "GET",
-      path: `/tasks/${gid}`,
-      query: { opt_fields: FIELDS.detail },
-      schema: AsanaSummaryTask,
-      notFoundAsNull: true,
-    }).pipe(Effect.map((result) => result.data));
+    orNull(
+      one({
+        operation: "getTaskDetail",
+        method: "GET",
+        path: `/tasks/${gid}`,
+        query: { opt_fields: FIELDS.detail },
+        schema: AsanaSummaryTask,
+      }),
+    );
 
   const listStories: AsanaApi["Service"]["listStories"] = (input) =>
     page({

@@ -101,11 +101,11 @@ const COLORS: Readonly<Record<string, string>> = {
 };
 
 /** Asana names its tag colours and publishes no hex values; the clients draw only hex. */
-export const hexOf = (color: string | null | undefined): string | null =>
+const hexOf = (color: string | null | undefined): string | null =>
   color === null || color === undefined ? null : (COLORS[color] ?? null);
 
 /** Asana accepts an email or a gid wherever it names a user, so the login needs no lookup. */
-export const login = (user: AsanaApi.AsanaUser): string => user.email?.trim() || user.gid;
+const login = (user: AsanaApi.AsanaUser): string => user.email?.trim() || user.gid;
 
 const toActor = (user: AsanaApi.AsanaUser): IssueActor => ({
   login: login(user),
@@ -114,7 +114,7 @@ const toActor = (user: AsanaApi.AsanaUser): IssueActor => ({
 });
 
 /** The `Eng. ID` the workspace gave the task, else the gid. */
-export const displayKeyOf = (task: AsanaApi.AsanaTask): string =>
+const displayKeyOf = (task: AsanaApi.AsanaTask): string =>
   task.custom_fields
     ?.find((field) => field.name?.trim().toLowerCase() === DISPLAY_KEY_FIELD)
     ?.display_value?.trim() || task.gid;

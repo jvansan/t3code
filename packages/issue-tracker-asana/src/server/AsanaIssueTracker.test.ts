@@ -2289,7 +2289,6 @@ describe("Asana tracker properties", () => {
               );
           }
         });
-        expect(["failed", "not-found"]).toContain(refused.reason);
         expect(refused.reason).toBe(refusal === "non-gid key" ? "not-found" : "failed");
         expect(fake.requests.slice(before).filter(isWrite)).toEqual([]);
       }),
