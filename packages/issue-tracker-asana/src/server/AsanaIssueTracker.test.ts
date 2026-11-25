@@ -1019,6 +1019,62 @@ const fakeTaskOf = (gid: string, source: SomeTask): FakeTask =>
   });
 
 describe("Asana tracker properties", () => {
+  const SomeWorkspace = Schema.Struct({
+    name: Text,
+    projects: Schema.Array(Text).check(Schema.isBetweenLength(0, 60)),
+  });
+
+  it.effect.prop(
+    "Feature: asana-issue-tracker, Property 6: A probe reports every live project of every workspace",
+    {
+      viewer: Schema.NullOr(Text),
+      workspaces: Schema.Array(SomeWorkspace).check(Schema.isBetweenLength(1, 4)),
+      pageSize: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+    },
+    ({ viewer, workspaces, pageSize }) =>
+      Effect.gen(function* () {
+        const fakeWorkspaces = workspaces.map((workspace, index) => ({
+          gid: String(1100 + index),
+          name: workspace.name,
+        }));
+        const projects = workspaces.flatMap((workspace, workspaceIndex) =>
+          workspace.projects.map((name, projectIndex): FakeProject => ({
+            gid: String(5000 + workspaceIndex * 1000 + projectIndex),
+            name,
+            workspace: { gid: fakeWorkspaces[workspaceIndex]?.gid ?? "" },
+            members: [],
+          })),
+        );
+        const fake = fakeAsana({
+          model: {
+            me: { ...JULIUS, name: viewer, workspaces: fakeWorkspaces },
+            projects,
+            pageSize,
+          },
+        });
+        const probed = yield* withTracker(fake, (tracker) =>
+          tracker.probeCredential("submitted_pat_test"),
+        );
+        const shown = (name: string | null, gid: string) => name?.trim() || gid;
+        expect(probed.account).toBe(shown(viewer, JULIUS.email ?? ""));
+        expect(probed.workspace).toBe(ASANA_WORKSPACE);
+        expect(probed.scopes).toEqual(
+          projects.map((project) => {
+            const workspace = fakeWorkspaces.find((w) => w.gid === project.workspace.gid);
+            const prefix =
+              fakeWorkspaces.length > 1 && workspace !== undefined
+                ? `${shown(workspace.name, workspace.gid)} / `
+                : "";
+            return { key: project.gid, name: `${prefix}${shown(project.name, project.gid)}` };
+          }),
+        );
+        expect(
+          fake.requests.every((request) => request.authorization === "Bearer submitted_pat_test"),
+        ).toBe(true);
+      }),
+    runs,
+  );
+
   it.effect.prop(
     "Feature: asana-issue-tracker, Property 8: A task maps to a summary field for field",
     { tasks: Schema.Array(SomeTask).check(Schema.isBetweenLength(1, 8)) },
