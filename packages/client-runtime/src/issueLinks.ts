@@ -6,6 +6,11 @@ import {
   type RepositoryIdentity,
 } from "@t3tools/contracts";
 import {
+  ASANA_HOST,
+  ASANA_KIND,
+  parseAsanaTaskUrl,
+} from "@t3tools/issue-tracker-asana/shared/issueUrl";
+import {
   LINEAR_HOST,
   LINEAR_KIND,
   parseLinearIssueUrl,
@@ -63,8 +68,11 @@ function parseIssueLink(
 
 function parseStandaloneIssueLink(url: string) {
   try {
-    const link = parseLinearIssueUrl(new URL(url));
-    return link === null ? null : { tracker: LINEAR_KIND, link };
+    const parsed = new URL(url);
+    const linear = parseLinearIssueUrl(parsed);
+    if (linear !== null) return { tracker: LINEAR_KIND, link: linear };
+    const asana = parseAsanaTaskUrl(parsed);
+    return asana === null ? null : { tracker: ASANA_KIND, link: asana };
   } catch {
     return null;
   }
@@ -77,7 +85,7 @@ export function isStandaloneIssueLink(url: string): boolean {
 
 /** A cheap pre-check, so text without such a link never asks for the bindings. */
 export function mayContainStandaloneIssueLink(text: string): boolean {
-  return text.includes(`${LINEAR_HOST}/`);
+  return text.includes(`${LINEAR_HOST}/`) || text.includes(`${ASANA_HOST}/`);
 }
 
 /**
