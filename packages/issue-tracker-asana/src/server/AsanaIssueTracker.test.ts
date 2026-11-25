@@ -2278,6 +2278,60 @@ describe("Asana tracker properties", () => {
     runs,
   );
 
+  const Piece = Schema.Literals([
+    "Ship it",
+    "é",
+    "日本語",
+    "🚀",
+    "**bold**",
+    "# Heading",
+    "- item",
+    "`code`",
+    "> quote",
+    "\n",
+    "\n\n",
+    " ",
+    "\t",
+    "\\",
+    '"',
+  ]);
+  const Prose = Schema.Array(Piece).check(Schema.isBetweenLength(0, 12));
+  const Fields = Schema.Literals(["title", "body", "both"]);
+
+  it.effect.prop(
+    "Feature: asana-issue-tracker, Property 16: Only named fields are written, and they read back",
+    { fields: Fields, titlePieces: Prose, bodyPieces: Prose },
+    ({ fields, titlePieces, bodyPieces }) =>
+      Effect.gen(function* () {
+        const title = titlePieces.join("").trim() || "T";
+        const body = bodyPieces.join("");
+        const input = {
+          ...SCOPE,
+          key: "7001",
+          ...(fields === "body" ? {} : { title }),
+          ...(fields === "title" ? {} : { body }),
+        };
+        const fake = fakeAsana({ model: { tasks: [task("7001", { notes: "Before" })] } });
+        yield* withTracker(fake, (tracker) => tracker.update?.(input) ?? Effect.die("none"));
+        const puts = fake.requests.filter(isWrite);
+        expect(puts.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
+          ["PUT", "/api/1.0/tasks/7001"],
+        ]);
+        expect(puts[0]?.body).toEqual({
+          data: {
+            ...(fields === "body" ? {} : { name: title }),
+            ...(fields === "title" ? {} : { notes: body }),
+          },
+        });
+        const detail = yield* withTracker(fake, (tracker) =>
+          tracker.getIssue({ ...SCOPE, key: "7001" }),
+        );
+        expect(detail.title).toBe(fields === "body" ? "Task 7001" : title);
+        expect(detail.body).toBe(fields === "title" ? "Before" : body);
+      }),
+    runs,
+  );
+
   it.effect.prop(
     "Feature: asana-issue-tracker, Property 8: A task maps to a summary field for field",
     { tasks: Schema.Array(SomeTask).check(Schema.isBetweenLength(1, 8)) },
