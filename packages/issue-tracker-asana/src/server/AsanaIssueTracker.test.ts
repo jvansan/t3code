@@ -9,7 +9,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
-import type { StandaloneIssueTrackerApi } from "@t3tools/source-control-core/server/IssueTracker";
+import type {
+  IssueTrackerError,
+  StandaloneIssueTrackerApi,
+} from "@t3tools/source-control-core/server/IssueTracker";
 import * as IssueTrackerHost from "@t3tools/source-control-core/server/IssueTrackerHost";
 
 import { ASANA_HOST, ASANA_WORKSPACE } from "../shared/issueUrl.ts";
@@ -2488,6 +2491,87 @@ describe("Asana tracker properties", () => {
             .map((c) => c.login),
         ).toEqual([expected]);
         expect(filtered.items.map((item) => item.key)).toEqual(["7001"]);
+      }),
+    runs,
+  );
+
+  const Token = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_./-]{8,64}$/));
+  const Operation = Schema.Literals([
+    "probeCredential",
+    "getViewer",
+    "listIssues",
+    "getIssue",
+    "getIssueLink",
+    "getComments",
+    "create",
+    "comment",
+    "update",
+    "setState",
+    "listCandidates",
+  ]);
+
+  it.effect.prop(
+    "Feature: asana-issue-tracker, Property 13: Every request carries the token as a Bearer credential",
+    { stored: Token, submitted: Token, operation: Operation },
+    ({ stored, submitted, operation }) =>
+      Effect.gen(function* () {
+        const fake = fakeAsana({
+          stored,
+          model: { tasks: [task("7001", { tags: [tagRef(BUG_TAG)] })] },
+        });
+        const run = (
+          tracker: StandaloneIssueTrackerApi,
+        ): Effect.Effect<unknown, IssueTrackerError> => {
+          const key = { ...SCOPE, key: "7001" };
+          switch (operation) {
+            case "probeCredential":
+              return tracker.probeCredential(submitted);
+            case "getViewer":
+              return tracker.getViewer({ cwd: SCOPE.cwd, host: SCOPE.host });
+            case "listIssues":
+              return tracker.listIssues({
+                ...SCOPE,
+                state: "all",
+                involvement: "assigned",
+                viewer: JULIUS.email ?? "",
+                sort: "updated",
+                limit: 10,
+              });
+            case "getIssue":
+              return tracker.getIssue(key);
+            case "getIssueLink":
+              return tracker.getIssueLink?.(key) ?? Effect.die("none");
+            case "getComments":
+              return tracker.getComments({ ...key, cursor: "a1.fake-offset-0" });
+            case "create":
+              return (
+                tracker.create?.({
+                  ...SCOPE,
+                  title: "T",
+                  body: "",
+                  labels: ["bug"],
+                  assignees: [THEO.gid],
+                }) ?? Effect.die("none")
+              );
+            case "comment":
+              return tracker.comment?.({ ...key, body: "Hi" }) ?? Effect.die("none");
+            case "update":
+              return (
+                tracker.update?.({ ...key, title: "T", labels: [], assignees: [] }) ??
+                Effect.die("none")
+              );
+            case "setState":
+              return tracker.setState?.({ ...key, state: "Completed" }) ?? Effect.die("none");
+            case "listCandidates":
+              return tracker.listCandidates?.(SCOPE) ?? Effect.die("none");
+          }
+        };
+        yield* withTracker(fake, run);
+        const expected = `Bearer ${operation === "probeCredential" ? submitted : stored}`;
+        expect(fake.requests.length).toBeGreaterThan(0);
+        expect(fake.requests.map((request) => request.authorization)).toEqual(
+          fake.requests.map(() => expected),
+        );
       }),
     runs,
   );
