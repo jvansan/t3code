@@ -76,10 +76,10 @@ export const IssueListRow = memo(function IssueListRow(props: {
           <View className="flex-row items-center gap-1.5">
             <PullRequestAvatar actor={item.author} size={16} />
             <Text className={cn("min-w-0 flex-1 text-xs", muted)} numberOfLines={1}>
-              {/* A Linear key already names its team; a git host's number needs the repository. */}
-              {item.displayKey.startsWith(`${item.scope}-`)
-                ? item.displayKey
-                : `${item.scope} ${item.displayKey}`}
+              {/* A git host's `#<n>` needs the repository; a standalone tracker's key stands alone. */}
+              {item.displayKey.startsWith("#")
+                ? `${item.scope} ${item.displayKey}`
+                : item.displayKey}
             </Text>
             <Text className={cn("text-2xs tabular-nums", muted)}>
               <RelativeTime timestamp={item.updatedAt} />
